@@ -1,0 +1,15 @@
+{
+  "schema": "FH_QUEUE_ALLOWLIST_1",
+  "entries": [
+    {
+      "repository": "example-project",
+      "ref_prefix": "review/",
+      "workflow": "forgehold-reference-guard.yml",
+      "job": "forgehold-reference-guard",
+      "workflow_sha256": "25a2cb0f6edda6c634b3d02fc65f7d29d3cfb8310ba5fae0aa320fb037f93b36",
+      "ok_lines": 0,
+      "log_required": [],
+      "log_forbidden": []
+    }
+  ]
+}

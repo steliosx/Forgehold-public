@@ -1,0 +1,47 @@
+{
+  "schema": "R60_EXPECTED_FULL_IDS_SPEC_DATA_1",
+  "status": "MODEL_ONLY_EXPECTED_TEST_ROSTER",
+  "source": {
+    "path": "tests/test_quality_job.py",
+    "bytes": 17043,
+    "sha256": "498c4e8ccbd23c8c3be9a628f898e3c7f6c6af40c10581455095c00f10e887c7"
+  },
+  "module": "tests.test_quality_job",
+  "ordering": "class name then method name; exact pinned two-class suite only",
+  "class_counts": {
+    "B1JobModelTests": 13,
+    "B1QualityModelTests": 14
+  },
+  "expected_full_ids": [
+    "tests.test_quality_job.B1JobModelTests.test_all_live_submission_and_publication_refuse_without_port_calls",
+    "tests.test_quality_job.B1JobModelTests.test_changed_inventory_or_input_tuple_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_changed_profile_activation_or_candidate_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_conflicting_profile_mode_inventory_or_duplicate_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_disabled_or_nonliteral_enabled_registry_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_each_independent_registry_control_pin_conflict_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_every_missing_runtime_control_grant_pin_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_missing_project_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_missing_registry_refuses",
+    "tests.test_quality_job.B1JobModelTests.test_model_prepares_exact_eleven_field_disabled_job",
+    "tests.test_quality_job.B1JobModelTests.test_qualification_project_cannot_supply_application_job",
+    "tests.test_quality_job.B1JobModelTests.test_registry_mutation_during_read_refuses_without_dispatch",
+    "tests.test_quality_job.B1JobModelTests.test_unknown_extra_binding_field_refuses",
+    "tests.test_quality_job.B1QualityModelTests.test_A7_three_checks_older_source_and_subject_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_bool_float_nonzero_or_string_exit_refuses_each_check",
+    "tests.test_quality_job.B1QualityModelTests.test_duplicate_json_and_extra_missing_report_fields_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_every_source_harness_workflow_runner_profile_inventory_tuple_conflict_refuses",
+    "tests.test_quality_job.B1QualityModelTests.test_exact_four_checks_pass_only_data_interpretation",
+    "tests.test_quality_job.B1QualityModelTests.test_failed_running_skipped_timeout_and_tree_unknown_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_lock_and_reported_expected_tool_conflicts_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_missing_extra_duplicate_or_reordered_checks_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_missing_independent_binding_or_report_cannot_issue_success",
+    "tests.test_quality_job.B1QualityModelTests.test_native_UUID_and_numeric_check_ID_types_never_conflated",
+    "tests.test_quality_job.B1QualityModelTests.test_quality_PASS_cannot_dispatch_cleanup_release_or_publish",
+    "tests.test_quality_job.B1QualityModelTests.test_stale_reversed_future_outside_window_and_late_intervals_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_unknown_truncated_changed_pin_and_oversized_report_refuse",
+    "tests.test_quality_job.B1QualityModelTests.test_untrusted_overprecise_or_offset_timestamps_refuse"
+  ],
+  "top_level_count": 27,
+  "subcase_count_claimed": false,
+  "execution_authority": false
+}

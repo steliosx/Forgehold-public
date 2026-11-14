@@ -1,0 +1,119 @@
+#!/bin/bash
+# INACTIVE PUBLIC REFERENCE. Configure and review a separate deployment packet.
+printf "%s\n" "Reference example only; execution is disabled." >&2
+exit 64
+
+set -euo pipefail
+umask 077
+readonly PILOT=/srv/forgehold/pilot
+readonly DATA=$PILOT/.preloop/smolvm-fh-b3
+readonly CONTROL=$PILOT/fh-b3-control
+readonly CLAIM=$CONTROL/create-consumed
+readonly NAME=preloop-runner-0-1
+readonly ORIGINAL=$PILOT/images/preloop-ubuntu-24.04-x86_64
+readonly PACK=$PILOT/.preloop/vms/preloop-example-images-preloop-ubuntu-24.04-x86_64-x86_64-59e464339594c0cffabcf6ee7ff4227a157bd607ce77e2e000e8304ae008c92a
+readonly REAL=$PILOT/.smolvm/smolvm
+fail() { printf 'PILOT_CREATE_GATE: %s\n' "$1" >&2; exit 78; }
+pin() { printf '%s  %s\n' "$1" "$2" | /usr/bin/sha256sum --check --status || fail 'checksum mismatch'; }
+readonly EXPIRY_PERMIT=$CONTROL/expiry-permit
+readonly STANDING_END=4000000000
+readonly QUEUE_DIR=/srv/forgehold/queue
+live_allowed() {
+    local e
+    [[ -f $EXPIRY_PERMIT && ! -L $EXPIRY_PERMIT ]] || fail 'expiry permit missing'
+    [[ $(/usr/bin/stat -c %s -- "$EXPIRY_PERMIT") == 11 ]] || fail 'expiry permit malformed'
+    e=$(/usr/bin/head -c 10 -- "$EXPIRY_PERMIT") || fail 'expiry permit unreadable'
+    [[ $e =~ ^[0-9]{10}$ && $e -le $STANDING_END ]] || fail 'expiry permit out of range'
+    [[ $(/usr/bin/date -u +%s) -lt $e ]] || fail 'agreement expired'
+    [[ ! -e $QUEUE_DIR/STOP && ! -L $QUEUE_DIR/STOP ]] || fail 'queue STOP present'
+    [[ ! -e $QUEUE_DIR/SUSPENDED && ! -L $QUEUE_DIR/SUSPENDED ]] || fail 'queue SUSPENDED present'
+}
+[[ ${SMOLVM_DATA_DIR:-} == "$DATA" ]] || fail 'wrong data root'
+[[ -z ${SMOLVM_DISABLE_SHARED_EXTRACT+x} ]] || fail 'shared extraction required'
+[[ ${PRELOOP_RUNNER_BASE_IMAGE:-} == "$ORIGINAL" ]] || fail 'wrong custom base'
+[[ ${PRELOOP_USE_PACKED_GOLDEN:-} == true && ${PRELOOP_USE_FORK:-} == false ]] || fail 'wrong packed/fork mode'
+[[ -d "$CONTROL" && ! -L "$CONTROL" ]] || fail 'control directory missing or symlinked'
+[[ ! -L "$CLAIM" ]] || fail 'permit path symlinked'
+redact=(); for w in "$@"; do case $w in --) break ;; -*) redact+=("${w%%=*}") ;; machine|ls|create|start|stop|delete|status|exec|cp|data-dir) redact+=("$w") ;; esac; done
+printf '%s argc=%s %s\n' "$(/usr/bin/date -u +%FT%TZ)" "$#" "${redact[*]}" >> "$CONTROL/gate-invocations.log" || fail 'gate log not writable'
+
+if [[ $# == 3 && $1 == machine && $2 == create && $3 == --help ]]; then
+    exec "$REAL" "$@"
+fi
+if [[ $# == 1 && $1 == --version ]]; then exec "$REAL" "$@"; fi
+[[ $# -ge 2 && $1 == machine ]] || fail 'operation outside pilot allowlist'
+case $2 in
+    ls)
+        [[ $# == 3 && $3 == --json ]] || fail 'unexpected list arguments'
+        ;;
+    status|data-dir|stop)
+        [[ $# == 4 && $3 == --name && $4 == "$NAME" ]] || fail 'unexpected lifecycle target'
+        ;;
+    delete)
+        [[ $# == 5 && $3 == --name && $4 == "$NAME" && $5 == -f ]] || fail 'unexpected delete target'
+        ;;
+    start)
+        live_allowed
+        [[ ${SMOLVM_EGRESS_FLOOR:-} == strict ]] || fail 'strict boot egress floor required'
+        [[ -d "$CLAIM" && $# == 4 && $3 == --name && $4 == "$NAME" ]] || fail 'unexpected start target or unclaimed permit'
+        ;;
+    exec)
+        live_allowed
+        [[ ${SMOLVM_EGRESS_FLOOR:-} == strict ]] || fail 'strict exec context required'
+        [[ -d "$CLAIM" ]] || fail 'unclaimed permit'
+        rest=("${@:3}"); found_name=0; found_separator=0; i=0
+        while (( i < ${#rest[@]} )); do
+            case ${rest[$i]} in
+                --) found_separator=1; ((i+=1)); break ;;
+                --stream) ((i+=1)) ;;
+                --name)
+                    (( i+1 < ${#rest[@]} )) || fail 'missing exec target'
+                    [[ ${rest[$((i+1))]} == "$NAME" && $found_name == 0 ]] || fail 'unexpected exec target'
+                    found_name=1; ((i+=2)) ;;
+                --timeout|--secret-env|--secret-file)
+                    (( i+1 < ${#rest[@]} )) || fail 'missing exec option value'
+                    ((i+=2)) ;;
+                *) fail 'unexpected exec option' ;;
+            esac
+        done
+        [[ $found_name == 1 && $found_separator == 1 && $i -lt ${#rest[@]} ]] || fail 'incomplete exec arguments'
+        ;;
+    cp)
+        live_allowed
+        [[ -d "$CLAIM" && $# == 4 ]] || fail 'unexpected copy arguments'
+        if [[ $3 == "$NAME":/* && $4 != *:* ]]; then :
+        elif [[ $4 == "$NAME":/* && $3 != *:* ]]; then :
+        else fail 'copy outside owned guest'; fi
+        ;;
+    create)
+        live_allowed
+        [[ ! -e "$CLAIM" ]] || fail 'one-create permit already consumed'
+        [[ $# == 23 ]] || fail 'unexpected create argument count'
+        bundle=${19}
+        case "$bundle" in
+            "$PILOT/.local/lib/preloop/runner/x86_64-unknown-linux-gnu:/opt/preloop/bin:ro"|"$PILOT/.preloop/externals/runner-bundle:/opt/preloop/bin:ro") ;;
+            *) fail 'unexpected runner bundle mount' ;;
+        esac
+        expected=(machine create --name "$NAME" --from "$PACK" --cpus 1 --mem 3072 --storage 20 --net --net-backend virtio-net --dns 8.8.8.8 --volume "$bundle" --volume "$PILOT/.preloop/control-bridge/$NAME:/run/preloop-control" --mount-socket "$PILOT/.preloop/preloop.sock:/run/preloop-control/engine.sock")
+        actual=("$@")
+        for ((i=0; i<${#expected[@]}; i++)); do
+            [[ ${actual[$i]} == "${expected[$i]}" ]] || fail 'create argv differs from reviewed contract'
+        done
+        [[ ${SMOLVM_EGRESS_FLOOR:-} == strict ]] || fail 'public-only egress floor required'
+        [[ ! -L "$PACK" && ! -L "$ORIGINAL" ]] || fail 'image path symlinked'
+        pin 8acd07687eeb290cb2962e4655ceb118f8adb7847fc2df414035d4b972d8fab3 "$PILOT/.local/bin/preloop"
+        pin 0da9c27e69fcf130ec417eb5a910ccd812144b1eaed071d85b64b6f0f40410fa "$PILOT/.local/lib/preloop/runner/x86_64-unknown-linux-gnu/preloop-runner"
+        pin 27920f7a18b0b346e2fa7ddb351f3a8d89590e2ab9febfdfee2a97be56493fe0 "$REAL"
+        pin a568b57b0229c059d354a50a963413ced32747876b04ee66948fde4639f286ec "$PILOT/.smolvm/smolvm-bin"
+        pin 64a397ca963530c3dbf11cffea87f321da25c224d26d6f7f52619b8ccf5a9069 "$PILOT/.smolvm/lib/libkrun.so"
+        pin 75db53d13c696ce0bcb872775b2b11496e15c670f7fb2aea9fdd82a0735ad5f2 "$PILOT/.smolvm/lib/libkrunfw.so.5.5.0"
+        pin 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 "$ORIGINAL"
+        pin 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 "$PACK"
+        free=$(/usr/bin/df --output=avail -B1 "$PILOT") || fail 'free space unreadable'
+        free=${free##*$'\n'}; free=${free//[[:space:]]/}
+        [[ $free =~ ^[0-9]+$ && $free -ge 68719476736 ]] || fail '64 GiB free-space gate failed'
+        /usr/bin/mkdir -- "$CLAIM" || fail 'one-create permit already consumed'
+        ;;
+    *) fail 'operation outside pilot allowlist' ;;
+esac
+exec "$REAL" "$@"

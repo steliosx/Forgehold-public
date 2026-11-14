@@ -1,0 +1,12 @@
+# INACTIVE PUBLIC REFERENCE; do not install. Paths, identities and pins are examples.
+[Unit]
+ConditionPathExists=/nonexistent/forgehold-public-example-disabled
+Description=Forgehold lane B3 Preloop engine HTTP socket (loopback); activates forgehold-lane-b3.service
+
+[Socket]
+ListenStream=127.0.0.1:9090
+NoDelay=true
+ReusePort=false
+
+[Install]
+WantedBy=sockets.target

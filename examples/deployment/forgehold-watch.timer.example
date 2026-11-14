@@ -1,0 +1,13 @@
+# INACTIVE PUBLIC REFERENCE; do not install. Paths, identities and pins are examples.
+[Unit]
+ConditionPathExists=/nonexistent/forgehold-public-example-disabled
+Description=Forgehold queue watcher every 10 minutes
+
+[Timer]
+Unit=forgehold-watch.service
+OnBootSec=5min
+OnUnitActiveSec=10min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

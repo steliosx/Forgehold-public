@@ -1,0 +1,240 @@
+#!/bin/bash
+# INACTIVE PUBLIC REFERENCE. Configure and review a separate deployment packet.
+printf "%s\n" "Reference example only; execution is disabled." >&2
+exit 64
+
+set -u
+P=/srv/forgehold/packet
+U=/srv/forgehold/operator/.config/systemd/user
+C=/srv/forgehold/pilot/fh-b3-control
+TOKEN=$(date -u +%Y%m%dT%H%M%SZ) || exit 30
+export FH_TOKEN=$TOKEN
+E=/srv/forgehold/evidence/fh-b3-$TOKEN
+H=$C/HOLD-$TOKEN
+IN=/srv/forgehold/lane-input
+INP="/usr/bin/python3.14 -I $P/fh_input.py"
+WFC="/usr/bin/python3.14 -I $P/fh_workflow.py"
+MARKER=/srv/forgehold/authority/owner.json
+MARKER_SHA=071b862132cc1404fa6b57730f552450d191870f4a73a9bc07bb0df69d08bfe3
+AGREEMENT=bound-by-SHA256SUMS-hash-in-the-signed-agreement
+CUST="/usr/bin/python3.14 -I $P/fh_custody.py"
+T=$(mktemp -d) || { echo "REFUSED: no temp dir" >&2; exit 30; }
+trap 'rm -rf -- "$T"' EXIT
+refuse() { echo "REFUSED (no effect): $*" >&2; exit 30; }
+RESERVED=
+hold_class() { $CUST append "$H" "{\"token\":\"$TOKEN\",\"by\":\"wrapper\",\"class\":\"$1\",\"stage\":\"$2\",\"detail\":\"$3\"}" \
+                 || { echo "CUSTODY_FAILURE: HOLD classification $1 not written" >&2; exit 31; }; }
+custody_fail() { echo "CUSTODY_FAILURE: $*" >&2; [ -n "$RESERVED" ] && $CUST append "$H" "{\"token\":\"$TOKEN\",\"by\":\"wrapper\",\"class\":\"CUSTODY_FAILURE\"}" 2>/dev/null; exit 31; }
+partial() { $CUST append "$E/effects.jsonl" "{\"stage\":\"$1\",\"state\":\"failed\",\"detail\":\"$2\"}" \
+              || custody_fail "effect failure record not written ($1)"
+            hold_class PARTIAL_INSTALL_OR_EFFECT_UNKNOWN "$1" "$2"
+            echo "PARTIAL_INSTALL_OR_EFFECT_UNKNOWN at $1: $2 (retained; no cleanup)" >&2; exit 32; }
+STAGE=pre-reservation SPID= INTR=
+on_sig() {
+  INTR=$1
+  if [ -n "$SPID" ]; then kill -TERM "$SPID" 2>/dev/null; return; fi
+  [ -n "$RESERVED" ] || { echo "REFUSED (no effect): interrupted ($1)" >&2; exit 30; }
+  hold_class INTERRUPTED "$STAGE" "signal $1"; echo "INTERRUPTED at $STAGE ($1)" >&2; exit 33; }
+trap 'on_sig INT' INT
+trap 'on_sig TERM' TERM
+effect() { $CUST append "$E/effects.jsonl" "{\"stage\":\"$1\",\"state\":\"$2\",\"target\":\"$3\"}" 2>/dev/null; }
+
+[ "$(id -u)" = 1000 ] && [ "$(id -g)" = 1000 ] || refuse "not uid/gid 1000"
+cd "$P" || refuse "packet dir missing"
+sha256sum --quiet --strict -c SHA256SUMS || refuse "packet file hash mismatch"
+if grep -l -E '@[A-Z0-9_]+@' -- $(ls -1 *.sh *.py *.json *.yml *.service *.socket 2>/dev/null) >/dev/null; then refuse "unfilled placeholder in packet"; fi
+[ "$(sha256sum < "$MARKER" | cut -d' ' -f1)" = "$MARKER_SHA" ] || refuse "ownership marker changed"
+for f in /home /srv/forgehold/operator /srv/forgehold /srv/forgehold "$IN" "$IN/INPUT.json" "$IN/INPUT.sha256"; do [ ! -L "$f" ] || refuse "symlink on input path: $f"; done
+for f in "$IN/INPUT.json" "$IN/INPUT.sha256"; do
+  [ -f "$f" ] && [ "$(stat -c '%a %u %g %h' "$f")" = "400 1000 1000 1" ] || refuse "input file not a 0400 uid/gid-1000 single-link regular file: $f"
+done
+[ "$(stat -c %s "$IN/INPUT.json")" -le 16384 ] && [ "$(stat -c %s "$IN/INPUT.sha256")" -le 65 ] || refuse "input file too large (INPUT.json <= 16384 B, INPUT.sha256 <= 65 B)"
+head -c 16385 "$IN/INPUT.json" > "$T/input.json" && [ "$(stat -c %s "$T/input.json")" -le 16384 ] || refuse "input snapshot (or larger than 16384 bytes)"
+head -c 65 "$IN/INPUT.sha256" > "$T/input.sha256" || refuse "input hash snapshot"
+WANT=$(tr -d '\n' < "$T/input.sha256")
+INPUT_SHA=$(sha256sum < "$T/input.json" | cut -d' ' -f1)
+[[ $WANT =~ ^[0-9a-f]{64}$ ]] && [ "$WANT" = "$INPUT_SHA" ] || refuse "INPUT.json does not hash to INPUT.sha256"
+$INP check "$T/input.json" || refuse "input does not validate"
+gf() { $INP get "$T/input.json" "$1" || refuse "input field $1"; }
+REPO=$(gf repository); WF=$(gf workflow); WF_SHA=$(gf workflow_sha256); JOB=$(gf job); REF=$(gf ref)
+LANE_COMMIT=$(gf commit); EXPIRY=$(gf expiry_epoch)
+export FH_REPO=$REPO FH_WORKFLOW=$WF FH_WORKFLOW_SHA256=$WF_SHA FH_JOB=$JOB FH_REF=$REF FH_COMMIT=$LANE_COMMIT FH_EXPIRY=$EXPIRY
+[ "$(date -u +%s)" -lt $((EXPIRY - 600)) ] || refuse "less than 600 s before the agreement expiry"
+QD=/srv/forgehold/queue
+KEYF=/srv/forgehold/operator/.config/forgehold-key/github-app-0.pem
+for f in /srv/forgehold/operator/.config /srv/forgehold/operator/.config/forgehold-key "$KEYF"; do [ ! -L "$f" ] || refuse "symlink on App key path: $f"; done
+[ -f "$KEYF" ] && [ "$(stat -c '%a %u %g %h' "$KEYF")" = "400 1000 1000 1" ] && [ "$(stat -c %s "$KEYF")" -ge 1 ] && [ "$(stat -c %s "$KEYF")" -le 16384 ] \
+  || refuse "App key file missing or not a 0400 uid/gid-1000 single-link regular file of 1-16384 bytes: $KEYF"
+OPERATOR="example operator"; [ "${FH_QUEUE:-}" != 1 ] || OPERATOR="forgehold-queue.service uid 1000"
+for f in "$QD/STOP" "$QD/SUSPENDED"; do [ ! -e "$f" ] && [ ! -L "$f" ] || refuse "queue $(basename "$f") present"; done
+timeout -k 2 20 gh api "repos/example-owner/$REPO/contents/.github/workflows/$WF?ref=$LANE_COMMIT" --jq .content > "$T/workflow.b64" || refuse "workflow file unreadable at the input commit"
+python3 -I -c 'import base64,sys; open(sys.argv[2],"wb").write(base64.b64decode(open(sys.argv[1]).read()))' "$T/workflow.b64" "$T/workflow.yml" || refuse "workflow decode"
+$WFC check "$T/workflow.yml" "$JOB" "$WF_SHA" || refuse "workflow at the input commit is not the agreed single-job subset"
+for f in "$E" "$H"; do [ ! -e "$f" ] && [ ! -L "$f" ] || refuse "already exists: $f"; done
+for f in "$U/forgehold-lane-b3.service" "$U/forgehold-lane-b3.socket" "$C" "$C/bin" "$C/bin/smolvm"; do [ ! -L "$f" ] || refuse "symlink: $f"; done
+for h in "$C"/HOLD-*; do [ -e "$h" ] || continue; [ "$(wc -l < "$h")" -ge 3 ] || refuse "earlier attempt not terminal: $h"; done
+[ ! -e /srv/forgehold/pilot/attempt3-control/HOLD ] || refuse "Example project lane HOLD exists"
+inactive() { local st; st=$(timeout -k 2 5 systemctl --user is-active "$1" 2>/dev/null); case $st in inactive|failed) return 0 ;; *) refuse "unit $1 state '${st:-unreadable}'" ;; esac; }
+inactive forgehold-lane-b3.service; inactive forgehold-lane-b3.socket
+for a in "" -a4 -a5 -a6 -a7 -a8; do for k in service socket; do inactive "preloop-pilot$a.$k"; done; done
+ss -ltn > "$T/listeners" 2>&1 || refuse "listener read failed"
+! grep -Eq '(127\.0\.0\.1|0\.0\.0\.0|\[::\]|\*):9090 ' "$T/listeners" || refuse "port 9090 already listening (127.0.0.1, 0.0.0.0, [::] or *)"
+reg() { timeout -k 2 20 "$@" | python3 -I -c 'import json,sys; sys.exit(0 if json.loads(sys.stdin.read()) == [] else 1)'; }
+reg env -i bash --noprofile --norc -c '. /srv/forgehold/pilot/env.sh; export SMOLVM_DATA_DIR=/srv/forgehold/pilot/.preloop/smolvm-fh-b3; exec smolvm machine ls --json' || refuse "lane registry not verified empty"
+SCAN="/usr/bin/python3.14 -I $P/fh_hostscan.py"
+timeout -k 2 20 /srv/forgehold/operator/.local/bin/smolvm machine ls --json > "$T/lab.json" || refuse "lab registry unreadable"
+LAB=$($SCAN lab preloop-runner-0-1 < "$T/lab.json") || refuse "lab registry has our machine name or is not a list"
+VMS=$($SCAN procs 'libkrun VM') || refuse "a libkrun VM executable is unreadable"
+[ "${VMS%% *}" = 0 ] || refuse "a lane libkrun VM is already running ($VMS own/foreign)"
+THERM= ok=0
+for i in $(seq 1 120); do
+  hot= r=
+  for t in /sys/class/thermal/thermal_zone*/temp; do v=$(cat "$t") && [[ $v =~ ^[0-9]+$ ]] || refuse "thermal read failed: $t"; r="$r${r:+,}$v"; [ "$v" -lt 85000 ] || hot=1; done
+  THERM="$THERM${THERM:+ }$r"
+  if [ -z "$hot" ]; then ok=$((ok+1)); [ "$ok" -ge 3 ] && break; else ok=0; fi
+  sleep 1
+done
+[ "$ok" -ge 3 ] || refuse "thermal not below 85000 for 3 consecutive 1 s readings within 120 s (last ${THERM##* })"
+THERM=$(printf '%s' "$THERM" | tr ' ' '\n' | tail -n 10 | tr '\n' ' ')
+MEM=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo); [[ $MEM =~ ^[0-9]+$ ]] && [ "$MEM" -ge 4718592 ] || refuse "MemAvailable ${MEM:-unread} kB below 4718592"
+[ "$(timeout -k 2 60 sha256sum < /srv/forgehold/pilot/.preloop/vms/preloop-example-images-preloop-ubuntu-24.04-x86_64-x86_64-59e464339594c0cffabcf6ee7ff4227a157bd607ce77e2e000e8304ae008c92a | cut -d' ' -f1)" = 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 ] || refuse "pack hash"
+
+printf 'FH_B3_HOLD token=%s INITIAL_INCOMPLETE\npacket=%s agreement=%s E=%s input=%s\n' "$TOKEN" "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" "$AGREEMENT" "$E" "$INPUT_SHA" > "$T/hold" || refuse "hold text"
+$CUST reserve "$E" "$C" "HOLD-$TOKEN" "$T/hold"; rc=$?
+case $rc in 0) RESERVED=1 ;; 10) refuse "custody reservation refused (nothing created)" ;; *) RESERVED=1; custody_fail "reservation rc=$rc" ;; esac
+STAGE=admission-record
+printf '{"schema":"FH_LANE_ADMISSION_3","token":"%s","agreement":"%s","packet_sums_sha256":"%s","marker_sha256":"%s","expiry_epoch":%s,"input_sha256":"%s","repository":"example-owner/%s","workflow":"%s","job":"%s","ref":"%s","commit":"%s","operator":"%s","admitted_utc":"%s","libkrun_own_foreign":"%s","lab_registry_count_names":"%s","memavail_kb":%s,"thermal_last_samples":"%s"}\n' \
+  "$TOKEN" "$AGREEMENT" "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" "$MARKER_SHA" "$EXPIRY" "$INPUT_SHA" "$REPO" "$WF" "$JOB" "$REF" "$LANE_COMMIT" "$OPERATOR" "$(date -u +%FT%TZ)" "$VMS" "$LAB" "$MEM" "$THERM" > "$T/adm" || custody_fail "admission text"
+$CUST new "$E/ADMISSION.json" "$T/adm" || custody_fail "admission record not written; no installation"
+$SCAN detail 'libkrun VM' > "$T/foreign-vms" 2>&1; $CUST new "$E/admission-libkrun.jsonl" "$T/foreign-vms" || custody_fail "admission VM detail not written"
+$CUST new "$E/admission-lab-registry.json" "$T/lab.json" || custody_fail "admission lab registry not written"
+$CUST new "$E/INPUT.json" "$T/input.json" || custody_fail "input copy not written"
+$CUST new "$E/workflow-admission.yml" "$T/workflow.yml" || custody_fail "admission workflow copy not written"
+for f in INPUT.json INPUT.sha256; do
+  [ ! -e "$IN/$f.consumed-$TOKEN" ] && [ ! -L "$IN/$f.consumed-$TOKEN" ] || partial input-consume "$f.consumed-$TOKEN already exists"
+  effect input-consume attempted "$IN/$f.consumed-$TOKEN" || partial input-consume "start record failed"
+  mv -n "$IN/$f" "$IN/$f.consumed-$TOKEN" && [ ! -e "$IN/$f" ] || partial input-consume "rename of $f failed"
+  effect input-consume done "$IN/$f.consumed-$TOKEN" || partial input-consume "result record failed"
+done
+[ "$(sha256sum < "$IN/INPUT.json.consumed-$TOKEN" | cut -d' ' -f1)" = "$INPUT_SHA" ] || partial input-consume "consumed INPUT.json bytes differ from the snapshot"
+cmp -s "$IN/INPUT.sha256.consumed-$TOKEN" "$T/input.sha256" || partial input-consume "consumed INPUT.sha256 bytes differ from the snapshot"
+
+umask 077
+STAGE=install
+if [ -e "$C/create-consumed" ]; then
+  TS=$(date -u +%Y%m%dT%H%M%SZ)
+  effect permit-aside attempted "$C/create-consumed.$TS" || partial permit-aside "start record failed"
+  mv -n "$C/create-consumed" "$C/create-consumed.$TS" && [ ! -e "$C/create-consumed" ] || partial permit-aside "rename failed"
+  effect permit-aside done "$C/create-consumed.$TS" || partial permit-aside "result record failed"
+fi
+same() { [ -f "$2" ] && [ "$(sha256sum < "$1" | cut -d' ' -f1)" = "$(sha256sum < "$2" | cut -d' ' -f1)" ]; }
+put() { local src=$1 dst=$2 mode=$3 ts
+  if same "$src" "$dst"; then effect "install:$src" already-equal "$dst" || partial "install:$src" "record failed"; return 0; fi
+  effect "install:$src" attempted "$dst" || partial "install:$src" "start record failed"
+  if [ -e "$dst" ]; then ts=$(date -u +%Y%m%dT%H%M%SZ); mv -n "$dst" "$dst.retained-$ts" || partial "install:$src" "rename aside failed"; fi
+  install -m "$mode" "$src" "$dst" || partial "install:$src" "install failed"
+  same "$src" "$dst" || partial "install:$src" "installed copy differs"
+  effect "install:$src" done "$dst" || partial "install:$src" "result record failed"; }
+[ -d "$C/bin" ] || { effect gate-dir attempted "$C/bin" || partial gate-dir "start record failed"; mkdir "$C/bin" || partial gate-dir "mkdir failed"; effect gate-dir done "$C/bin" || partial gate-dir "result record failed"; }
+printf '%s\n' "$EXPIRY" > "$T/expiry-permit" || partial expiry-permit "temp write failed"
+if [ -e "$C/expiry-permit" ] || [ -L "$C/expiry-permit" ]; then
+  [ ! -L "$C/expiry-permit" ] || partial expiry-permit "existing expiry-permit is a symlink"
+  if ! same "$T/expiry-permit" "$C/expiry-permit"; then ts=$(date -u +%Y%m%dT%H%M%SZ)
+    effect expiry-permit-aside attempted "$C/expiry-permit.$ts" || partial expiry-permit "aside start record failed"
+    mv -n "$C/expiry-permit" "$C/expiry-permit.$ts" && [ ! -e "$C/expiry-permit" ] || partial expiry-permit "aside rename failed"
+    effect expiry-permit-aside done "$C/expiry-permit.$ts" || partial expiry-permit "aside result record failed"
+  fi
+fi
+if [ ! -e "$C/expiry-permit" ]; then
+  effect expiry-permit attempted "$C/expiry-permit" || partial expiry-permit "start record failed"
+  install -m 0400 "$T/expiry-permit" "$C/expiry-permit" || partial expiry-permit "install failed"
+  effect expiry-permit done "$C/expiry-permit" || partial expiry-permit "result record failed"
+fi
+[ "$(cat "$C/expiry-permit")" = "$EXPIRY" ] && [ "$(stat -c %a:%u:%g:%h "$C/expiry-permit")" = "400:1000:1000:1" ] || partial expiry-permit "effective expiry-permit read-back differs from $EXPIRY"
+$CUST new "$E/expiry-permit" "$T/expiry-permit" || custody_fail "expiry-permit copy not written"
+put smolvm-gate-fh-b3.sh "$C/bin/smolvm" 0755
+put forgehold-lane-b3.service "$U/forgehold-lane-b3.service" 0644
+put forgehold-lane-b3.socket "$U/forgehold-lane-b3.socket" 0644
+effect daemon-reload attempted user-manager || partial daemon-reload "start record failed"
+timeout -k 2 20 systemctl --user daemon-reload || partial daemon-reload "reload failed or timed out"
+effect daemon-reload done user-manager || partial daemon-reload "result record failed"
+
+STAGE=supervisor
+mkdir "$E/supervisor" || partial supervisor-dir "mkdir failed"
+/usr/bin/python3.14 -I -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["bash"] + sys.argv[1:])' \
+  "$P/supervise_fh_b3.sh" "$E/supervisor" & SPID=$!
+SRC=
+while :; do wait "$SPID"; w=$?; kill -0 "$SPID" 2>/dev/null || { SRC=${SRC:-$w}; break; }; done
+wait "$SPID" 2>/dev/null; w=$?; [ "$w" != 127 ] && SRC=$w
+G=$SPID; SPID=
+/usr/bin/python3.14 -I -c 'import os,sys
+sid=int(sys.argv[1]); left=[]
+for p in os.listdir("/proc"):
+    if not p.isdigit():
+        continue
+    try:
+        raw=open("/proc/%s/stat" % p).read()
+    except OSError:
+        continue
+    f=raw[raw.rindex(")")+2:].split()
+    if int(f[3]) == sid:
+        left.append(p)
+print(" ".join(left)); sys.exit(1 if left else 0)' "$G" > "$T/session-left"
+if [ $? != 0 ]; then
+  hold_class PRODUCERS_LIVE "join" "session $G not empty after the supervisor exited (pids: $(cat "$T/session-left")); nothing sealed"
+  echo "PRODUCERS_LIVE: session $G not empty; evidence left unsealed" >&2; exit 35
+fi
+STAGE=finalize
+if [ -f "$C/gate-invocations.log" ]; then cp --no-preserve=all "$C/gate-invocations.log" "$E/gate-invocations.log" || { hold_class UNSEALED finalize "gate log copy failed"; echo "UNSEALED: gate log copy" >&2; exit 34; }
+else printf 'absent\n' > "$E/gate-invocations.absent"; fi
+
+LOGCHK=$($INP logcheck "$E/INPUT.json" "$E/supervisor/job.log") || LOGCHK='{}'
+python3 -I - "$E" "$SRC" "$TOKEN" "${INTR:-none}" "$LANE_COMMIT" "$INPUT_SHA" "$LOGCHK" > "$T/result" <<'PY' || { hold_class UNSEALED finalize "result text"; echo "UNSEALED: result text" >&2; exit 34; }
+import json, os, re, sys
+e, src, token, intr, commit, input_sha = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
+try:
+    logchk = json.loads(sys.argv[7])
+except ValueError:
+    logchk = {}
+d = os.path.join(e, "supervisor")
+def read(name):
+    try:
+        return open(os.path.join(d, name)).read()
+    except OSError:
+        return None
+try:
+    chk = json.loads(read("check-run.json") or "null")
+except ValueError:
+    chk = None
+check_id = (read("check-id.txt") or "").strip() or None
+checks = {}
+checks["supervisor_exit_0"] = src == 0
+checks["check_run_ours"] = isinstance(chk, dict) and str(chk.get("id")) == check_id and check_id is not None
+checks["check_head_is_lane_commit"] = isinstance(chk, dict) and chk.get("head_sha") == commit
+checks["check_completed_success"] = isinstance(chk, dict) and chk.get("status") == "completed" and chk.get("conclusion") == "success"
+try:
+    run = json.loads(read("run-final.json") or "null")
+except ValueError:
+    run = None
+checks["ownership_verified"] = os.path.exists(os.path.join(d, "run-verified"))
+checks["native_run_success_ours"] = isinstance(run, dict) and run.get("status") == "success" and run.get("run_id") == ((read("run-id.txt") or "").strip() or None)
+for k in ("log_present", "log_required_all_present", "log_forbidden_none_present", "ok_lines_equal"):
+    checks[k] = logchk.get(k) is True
+checks["not_interrupted"] = intr == "none"
+res = {
+  "schema": "FH_LANE_RESULT_1", "token": token, "input_sha256": input_sha, "ok_lines_seen": logchk.get("ok_lines_seen"), "lane_commit": commit, "supervisor_exit": src, "interrupt": intr,
+  "run_id": (read("run-id.txt") or "").strip() or None, "check_id": check_id, "attribution_checks": checks,
+  "states": {
+    "source_review": "requires independent review",
+    "tests_run": "PASS" if all(checks.values()) else "NOT_PASS",
+    "runtime_qualification": "NOT_QUALIFIED (named witnesses only)",
+    "usable_project_ci": ("ONE local Preloop execution of a GitHub-sourced workflow with an App-published check (not a GitHub Actions self-hosted job)"
+                          if all(checks.values()) else "NOT_ESTABLISHED")},
+}
+print(json.dumps(res, indent=1, sort_keys=True))
+PY
+$CUST new "$E/RESULT.json" "$T/result" || { hold_class UNSEALED finalize "RESULT.json not written"; echo "UNSEALED: RESULT.json not written" >&2; exit 34; }
+M=$($CUST seal "$E" MANIFEST.json) || { hold_class UNSEALED finalize "manifest not sealed"; echo "UNSEALED: manifest not sealed" >&2; exit 34; }
+hold_class SEALED finalize "manifest_sha256=$M supervisor_exit=$SRC"
+echo "manifest_sha256=$M supervisor_exit=$SRC evidence=$E"
+exit "$SRC"

@@ -1,0 +1,127 @@
+#!/bin/bash
+# INACTIVE PUBLIC REFERENCE. Configure and review a separate deployment packet.
+printf "%s\n" "Reference example only; execution is disabled." >&2
+exit 64
+
+set -u
+P=/srv/forgehold/packet
+QD=/srv/forgehold/queue
+IN=/srv/forgehold/lane-input
+LOCK=/srv/forgehold/host-heavy.lock
+Q="/usr/bin/python3.14 -I $P/fh_queue.py"
+HEADSUP_S=60
+PHASE=wait STOPREQ= LPID= RID= NAPPID=
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" >> "$QD/queue.log"; }
+mark() { local before after
+         before=$(stat -c %s "$QD/SUSPENDED" 2>/dev/null || echo 0)
+         printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$QD/SUSPENDED" || return 1
+         after=$(stat -c %s "$QD/SUSPENDED" 2>/dev/null || echo 0); [ "$after" -gt "$before" ]; }
+custody() { local m="CUSTODY_FAILURE phase=$PHASE request=${RID:-${NAME:-none}} launcher_exit=${w:-none} output=${OUT:-none}: $*"
+            echo "QUEUE_$m" >&2
+            if mark "$m"; then log "QUEUE_$m; SUSPENDED established"
+            else echo "QUEUE_CUSTODY_FAILURE: SUSPENDED write failed; SUSPENDED NOT established" >&2
+                 log "QUEUE_$m; SUSPENDED write FAILED, NOT established"; fi
+            exit 31; }
+suspend() { if ! mark "$1"; then echo "QUEUE_CUSTODY_FAILURE: SUSPENDED write failed ($1); SUSPENDED NOT established" >&2
+                 log "QUEUE_CUSTODY_FAILURE: SUSPENDED write failed ($1); NOT established"; exit 31; fi
+            log "SUSPENDED: $1"; exit 1; }
+on_sig() {
+  STOPREQ=$1
+  case $PHASE in
+    wait) [ -z "$NAPPID" ] || kill "$NAPPID" 2>/dev/null; rm -f "$QD/ANNOUNCE.json"; log "$1 while waiting (nothing staged); exiting"; exit 0 ;;
+    running) log "$1: forwarding TERM to launcher $LPID"; kill -TERM "$LPID" 2>/dev/null ;;
+    *) log "$1 during $PHASE: stop after this step" ;;
+  esac
+}
+trap 'on_sig TERM' TERM
+trap 'on_sig INT' INT
+nap() { sleep "$1" & NAPPID=$!; wait "$NAPPID"; NAPPID=; }
+halted() { [ -e "$QD/STOP" ] || [ -L "$QD/STOP" ] || [ -e "$QD/SUSPENDED" ] || [ -L "$QD/SUSPENDED" ]; }
+cool() {
+  local n=$1 limit=$2 ok=0 i t v hot
+  for i in $(seq 1 $((n + 5))); do
+    hot=
+    for t in /sys/class/thermal/thermal_zone*/temp; do v=$(cat "$t" 2>/dev/null) && [[ $v =~ ^[0-9]+$ ]] || return 1; [ "$v" -lt "$limit" ] || hot=1; done
+    if [ -z "$hot" ]; then ok=$((ok+1)); [ "$ok" -ge "$n" ] && return 0; else ok=0; fi
+    sleep 1
+  done
+  return 1
+}
+host_clear() {
+  cool 10 75000 || return 1
+  [ "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" -ge 5242880 ] || return 1
+  case $(timeout -k 2 5 systemctl --user is-active forgehold-lane-b3.service 2>/dev/null) in inactive|failed) ;; *) return 1 ;; esac
+  flock -n -E 75 "$LOCK" true || return 1
+  holds_state || return 1
+}
+holds_state() {
+  local h="$QD/holds" n
+  [ -d "$h" ] && [ ! -L "$h" ] || return 2
+  n=$(find "$h" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null) || return 2
+  [ -z "$n" ] || return 1
+}
+unstage() {
+  local f
+  for f in INPUT.json INPUT.sha256; do
+    if [ -e "$IN/$f" ] || [ -L "$IN/$f" ]; then mv -n "$IN/$f" "$IN/$f.notrun-$RID" && [ ! -e "$IN/$f" ] || custody "rename of staged $f failed ($RID)"; fi
+  done
+  $Q notrun "$QD" "$RID" "$1" 2>>"$QD/queue.log" || custody "NOT_RUN record for $RID not written"
+  log "not run $RID: $1"
+}
+
+mkdir -p -m 0700 "$QD/requests" || exit 1
+mkdir -p -m 0700 "$QD/holds" || exit 1
+exec 8>"$QD/queue_run.lock" || exit 1
+flock -n 8 || { echo "queue_run already running for $QD" >&2; exit 1; }
+log "start pid $$ packet $P"
+while :; do
+  PHASE=wait RID=
+  halted && { log "STOP or SUSPENDED present; exiting"; exit 0; }
+  $Q authority "$QD/ACTIVE.json" "$P" 2>>"$QD/queue.log" || suspend "authority check failed (ACTIVE.json/packet/allowlist)"
+  REQ=$($Q select "$QD" "$P" 2>>"$QD/queue.log"); rc=$?
+  [ "$rc" = 3 ] && { nap 60; continue; }
+  [ "$rc" = 0 ] || suspend "select failed rc=$rc"
+  NAME=$(basename "$REQ")
+  printf '{"request":"%s","not_before_utc":"%s"}\n' "$NAME" "$(date -u -d "+$HEADSUP_S sec" +%FT%TZ)" > "$QD/ANNOUNCE.json"
+  log "announce $NAME"
+  nap "$HEADSUP_S"
+  until host_clear; do halted && { rm -f "$QD/ANNOUNCE.json"; log "halted while waiting"; exit 0; }; nap 60; done
+  halted && { rm -f "$QD/ANNOUNCE.json"; log "halted before staging"; exit 0; }
+  $Q authority "$QD/ACTIVE.json" "$P" 2>>"$QD/queue.log" || suspend "authority changed before staging"
+
+  PHASE=staging
+  RID=$($Q stage "$REQ" "$IN" "$P" 2>>"$QD/queue.log"); rc=$?
+  [ "$rc" = 3 ] && { rm -f "$QD/ANNOUNCE.json"; log "rejected at staging (stale or NOT_RUN): $NAME"; [ -z "$STOPREQ" ] || exit 0; continue; }
+  [ "$rc" = 0 ] || suspend "stage failed rc=$rc for $NAME (the request is claimed only if the live-head read succeeded; check requests/ and claimed/; INPUT may be partly staged)"
+  PHASE=staged
+  [ -z "$STOPREQ" ] || { unstage stop-requested; rm -f "$QD/ANNOUNCE.json"; exit 0; }
+  if ! cool 3 75000; then unstage thermal-at-launch; rm -f "$QD/ANNOUNCE.json"; [ -z "$STOPREQ" ] || exit 0; continue; fi
+  [ -z "$STOPREQ" ] || { unstage stop-requested; rm -f "$QD/ANNOUNCE.json"; exit 0; }
+  OUT=$(mktemp) || { unstage setup-failed; rm -f "$QD/ANNOUNCE.json"; [ -z "$STOPREQ" ] || exit 0; continue; }
+  exec 9>>"$LOCK" || { rm -f "$OUT"; unstage setup-failed; rm -f "$QD/ANNOUNCE.json"; [ -z "$STOPREQ" ] || exit 0; continue; }
+  if ! flock -n 9; then exec 9>&-; rm -f "$OUT"; unstage lock-taken; rm -f "$QD/ANNOUNCE.json"; [ -z "$STOPREQ" ] || exit 0; continue; fi
+  hs=0; holds_state || hs=$?
+  if [ "$hs" != 0 ]; then exec 9>&-; rm -f "$OUT"; if [ "$hs" = 1 ]; then unstage hold-present; else unstage hold-unknown; fi; rm -f "$QD/ANNOUNCE.json"; [ -z "$STOPREQ" ] || exit 0; continue; fi
+
+  PHASE=launching
+  log "launch $RID"
+  FH_QUEUE=1 bash "$P/run_fh_b3.sh" > "$OUT" 2>&1 & LPID=$!
+  PHASE=running
+  [ -z "$STOPREQ" ] || { log "stop requested during launch: forwarding TERM to launcher $LPID"; kill -TERM "$LPID" 2>/dev/null; }
+  while :; do wait "$LPID"; w=$?; kill -0 "$LPID" 2>/dev/null || break; done
+  wait "$LPID" 2>/dev/null; w2=$?; [ "$w2" != 127 ] && w=$w2
+
+  PHASE=recording
+  LPID=; exec 9>&-
+  cat "$OUT" >> "$QD/queue.log"
+  rm -f "$QD/ANNOUNCE.json"
+  for f in INPUT.json INPUT.sha256; do
+    if [ -e "$IN/$f" ] || [ -L "$IN/$f" ]; then mv -n "$IN/$f" "$IN/$f.refused-$RID" && [ ! -e "$IN/$f" ] || custody "rename of refused $f failed ($RID)"; fi
+  done
+  $Q record "$QD" "$RID" "$w" "$OUT" 2>>"$QD/queue.log"; rc=$?
+  [ -e "$QD/done/$RID.json" ] || custody "done record for $RID not written"
+  [ "$rc" = 0 ] || suspend "attempt $RID not a clean terminal (launcher exit $w); read its evidence and HOLD"
+  log "done $RID exit $w"
+  rm -f "$OUT"
+  [ -z "$STOPREQ" ] || { log "stop requested ($STOPREQ); exiting after recording $RID"; exit 0; }
+done

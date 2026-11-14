@@ -1,0 +1,12 @@
+Forgehold
+Copyright 2026 The Forgehold Authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository contains only Forgehold's own source and data. It does not
+bundle or vendor any third-party code. Forgehold is designed to run on, and
+depends on, the following upstream projects, which are distributed separately
+under their own licenses:
+
+- Preloop v0.33.9 (https://github.com/preloopdev/preloop) - MIT License
+- SmolVM v1.19.0 (https://github.com/smol-machines/smolvm) - Apache License 2.0

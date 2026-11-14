@@ -1,0 +1,12 @@
+# INACTIVE PUBLIC REFERENCE; do not install. Paths, identities and pins are examples.
+[Unit]
+ConditionPathExists=/nonexistent/forgehold-public-example-disabled
+Description=Forgehold queue watcher (one pass; at most one request)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3.14 -I /srv/forgehold/packet/fh_watch.py /srv/forgehold/queue /srv/forgehold/packet
+NoNewPrivileges=yes
+UMask=0077
+TimeoutStartSec=180
+Restart=no

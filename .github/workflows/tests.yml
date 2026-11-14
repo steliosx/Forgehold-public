@@ -1,0 +1,23 @@
+name: Unit tests
+on:
+  push:
+    branches: [main, "release-preview/**"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.14'
+      - name: Adapter, link and queue unit tests
+        run: python -I -B -m unittest discover -s tests -t . -v
+      - name: Supervisor unit tests
+        run: python -I -B -m unittest discover -s wrapper/tests -t . -v
