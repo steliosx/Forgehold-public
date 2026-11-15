@@ -1,0 +1,102 @@
+# Probe: can a GitHub-hosted Linux runner start a SmolVM microVM?
+# Runs only when a probe/** branch is pushed. It uses no secrets and no third-party actions,
+# checks out nothing, and installs one pinned SmolVM release after a SHA-256 check.
+# A result here is about this runner type only. It is not runtime qualification.
+name: Probe KVM and SmolVM
+
+on:
+  push:
+    branches: ["probe/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-kvm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smolvm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SMOLVM_VERSION: "1.22.1"
+      SMOLVM_SHA256: "548317b45fefa517127dd93771e6007ca77cf62710061b87bd370e6807a14e72"
+    steps:
+      - name: Runner facts
+        run: |
+          set -u
+          uname -srm
+          echo "nproc=$(nproc)"
+          grep -E '^(MemTotal|MemAvailable):' /proc/meminfo
+          df -h / "$RUNNER_TEMP" "$HOME"
+          echo "cpu_virt_flags=$(grep -c -w -E 'vmx|svm' /proc/cpuinfo || true)"
+          ls -l /dev/kvm || echo "FH_PROBE_NO_DEV_KVM"
+
+      - name: Let the runner user open /dev/kvm
+        id: kvm
+        run: |
+          set -eu
+          test -e /dev/kvm
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+          echo "FH_PROBE_KVM_ACCESS_OK"
+
+      - name: Install SmolVM (pinned release, SHA-256 checked)
+        id: install
+        run: |
+          set -eu
+          f="smolvm-${SMOLVM_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$f" \
+            "https://github.com/smol-machines/smolvm/releases/download/v${SMOLVM_VERSION}/$f"
+          echo "${SMOLVM_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          mkdir -p "$HOME/.smolvm"
+          tar -xzf "$RUNNER_TEMP/$f" -C "$HOME/.smolvm" --strip-components=1
+          "$HOME/.smolvm/smolvm" --version
+
+      - name: Boot one bare microVM (no network, no image pull)
+        id: bare
+        if: ${{ !cancelled() && steps.kvm.outcome == 'success' && steps.install.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          timeout 300 "$HOME/.smolvm/smolvm" machine run -- \
+            sh -c 'echo FH_PROBE_GUEST_OK; uname -r; echo "guest_nproc=$(nproc)"' 2>&1 \
+            | tee "$RUNNER_TEMP/bare.out"
+          echo "boot_and_run_seconds=$(( $(date +%s) - start ))"
+          tr -d '\r' < "$RUNNER_TEMP/bare.out" | grep -qx 'FH_PROBE_GUEST_OK'
+          echo "FH_PROBE_BARE_VM_OK"
+
+      - name: Boot one image microVM (network on, alpine pulled)
+        id: image
+        if: ${{ !cancelled() && steps.kvm.outcome == 'success' && steps.install.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          timeout 300 "$HOME/.smolvm/smolvm" machine run --net --image alpine:3.20 -- \
+            sh -c 'echo FH_PROBE_IMAGE_GUEST_OK; cat /etc/alpine-release' 2>&1 \
+            | tee "$RUNNER_TEMP/image.out"
+          echo "pull_boot_and_run_seconds=$(( $(date +%s) - start ))"
+          tr -d '\r' < "$RUNNER_TEMP/image.out" | grep -qx 'FH_PROBE_IMAGE_GUEST_OK'
+          echo "FH_PROBE_IMAGE_VM_OK"
+
+      - name: Summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### SmolVM on a hosted runner"
+            echo ""
+            echo "| Step | Outcome |"
+            echo "|---|---|"
+            echo "| /dev/kvm access | ${{ steps.kvm.outcome }} |"
+            echo "| SmolVM ${SMOLVM_VERSION} install | ${{ steps.install.outcome }} |"
+            echo "| Bare microVM | ${{ steps.bare.outcome }} |"
+            echo "| Image microVM (alpine:3.20) | ${{ steps.image.outcome }} |"
+            echo ""
+            echo "One run on one runner type. Not runtime qualification."
+          } >> "$GITHUB_STEP_SUMMARY"
