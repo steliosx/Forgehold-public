@@ -1,6 +1,6 @@
 # Public source scope
 
-This tree starts a new history for a source preview. Operational history, private inventories, historical review hashes, author/session records and run evidence are excluded. Generic project names, source fixtures, byte counts and digest bindings have been regenerated for this tree.
+This tree starts a new history for a source preview. Operational history, private inventories, historical review hashes, author/session records and run evidence are excluded. [Beta observations](BETA-OBSERVATIONS.md) gives a short summary of the private beta without those records. Generic project names, source fixtures, byte counts and digest bindings have been regenerated for this tree.
 
 `fixtures/example-project/` is deliberately synthetic. Its files describe sample inputs, not a functional quality pipeline. The inventory hashes their exact bytes. Profiles remain disabled, with no runtime identities or authority. The model quality report is fabricated test data and must never be used as evidence of an actual run.
 

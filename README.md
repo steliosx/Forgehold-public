@@ -2,6 +2,8 @@
 
 Forgehold explores a controlled CI execution lane built around Preloop and SmolVM: explicit job inputs, source bindings, bounded execution, and retained evidence for independent review.
 
+Two design rules apply throughout. Use Preloop and SmolVM wherever they already provide a function, and add Forgehold code only for what they lack (job profiles and validation, pinned evidence, fail-closed result checking). And turn every result into a strict PASS, REFUSED or UNKNOWN record: anything that is not fully proven is not a PASS.
+
 **This is a source preview with synthetic examples, not an installable runner or a qualified production deployment.** Its immediately usable CI is the Python unit suite on standard GitHub-hosted runners. Those tests do not boot a VM, exercise a real engine, or prove isolation or cleanup on a live host.
 
 ## Run the unit tests
@@ -23,13 +25,17 @@ The suites contain 80 adapter/link/queue tests and 76 supervisor tests. One file
 - `profiles/` and `fixtures/`: disabled profiles and synthetic project data. The reported tool versions and PASS records are model inputs, not results from executing those tools.
 - `examples/deployment/`: inactive shell and service references. Shell examples exit before performing any operation; service examples have a deliberately unmet activation condition.
 
+## Private beta record
+
+From 2026-10-16 to 2026-11-06 Forgehold ran as a private beta lane on one laptop: 36 queued runs across four repositories, including five runtime probes. Runtime was never qualified. [Beta observations](docs/BETA-OBSERVATIONS.md) summarizes what the lane observed and what it does not show, and [the workflow subset](docs/WORKFLOW-SUBSET.md) lists the workflow and request rules a job had to meet.
+
 ## Scope and limitations
 
 The adapter intentionally binds one synthetic project rather than offering a general enrollment API. No private project inventory, operational run record, mailbox key, credential, active authority record or runtime image is distributed. No runtime dependencies are installed by CI.
 
 Source review, unit-test results, runtime qualification, and permission to operate a deployment are separate. A deployment needs its own reviewed configuration, current dependency/security assessment, explicit authority, signed identity setup, resource policy and end-to-end evidence. Nothing in this preview authorizes activation or claims that arbitrary GitHub Actions workflows are supported.
 
-See [the architecture](docs/ARCHITECTURE.md), [release scope](docs/RELEASE-SCOPE.md), and [security reporting](SECURITY.md).
+See [the architecture](docs/ARCHITECTURE.md), [the workflow subset](docs/WORKFLOW-SUBSET.md), [beta observations](docs/BETA-OBSERVATIONS.md), [release scope](docs/RELEASE-SCOPE.md), and [security reporting](SECURITY.md).
 
 ## License
 
