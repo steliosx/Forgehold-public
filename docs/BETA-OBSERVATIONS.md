@@ -61,6 +61,12 @@ On 2026-11-06 the retained records of all five probes were re-read offline with 
 - A fixed-pattern credential scan of the retained files found no hits. A few files were excluded from that scan and covered only by manifest integrity checks. Pattern scanning does not establish that no credentials were present.
 - A verifier exit 0 means the retained records met that verifier's contract. It does not turn an intended failure into a success or explain why a fault occurred.
 
+## Later note: hosted-runner probe (2026-11-15)
+
+After the beta, one workflow run checked whether a standard GitHub-hosted Linux runner (ubuntu-24.04, 4 vCPU, 16 GB) can start SmolVM microVMs. With a udev rule that opens `/dev/kvm` to the runner user, SmolVM 1.22.1 (release archive, SHA-256 checked) started one VM without network and one Alpine image VM, and both printed their markers ([run 43718530636](https://github.com/steliosx/Forgehold-public/actions/runs/43718530636); the workflow stays on the branch `probe/kvm-20261115`). The lane itself pins SmolVM 1.19.0.
+
+This is one run on one runner type. It is not runtime qualification, and it does not prove isolation, egress control or clean-up on hosted runners.
+
 ## What this does not show
 
 - Runtime qualification, enforced isolation, egress enforcement or secret absence.
