@@ -9,9 +9,10 @@ cp_s1/data_rules.py (:8-14 Refused/require, :37-39 digest, :42-46 bounded canoni
 No Forgehold/R10 import; no controller, ledger, queue or authority layer.
 
 Seams (keyword-only parameters of main() with the real defaults; the operator argv never reaches them):
-popen, collect, open_pinned, read_once, sink_check, exists, now, writer. open_pinned/_read_once also take
+popen, collect, open_pinned, read_once, sink_check, claim_once, now, writer. open_pinned/_read_once also take
 `ops` (os-like: open/fstat/read/close) and `gate` (a callable that raises Refused when the applicable
-original deadline no longer permits the next I/O action). Import has no side effect except reading the
+original deadline no longer permits the next I/O action); claim_once(path, gate) creates the once-namespace
+marker. Import has no side effect except reading the
 monotonic clock once (ORIGIN; after interpreter bootstrap, recorded in the receipt).
 """
 import fcntl
@@ -523,10 +524,11 @@ def _frame(budget, label, value, gate):
 
 def main(argv=None, *, now=time.monotonic, writer=None, popen=subprocess.Popen,
          collect=collect_child_output, open_pinned=open_pinned, sink_check=verify_sink,
-         exists=os.path.exists, read_once=None):
+         claim_once=None, read_once=None):
     argv = sys.argv[1:] if argv is None else argv
     writer = (lambda raw: os.write(1, raw)) if writer is None else writer
     read_once = _read_once if read_once is None else read_once      # defined below main()
+    claim_once = _claim_once if claim_once is None else claim_once  # defined below main()
     deadlines = Deadlines(ORIGIN, now)
     budget = Budget(writer)
     finalizers = Finalizers()
@@ -563,7 +565,9 @@ def main(argv=None, *, now=time.monotonic, writer=None, popen=subprocess.Popen,
         deadlines.check('roster.after', deadlines.body)
         receipt['roster'] = {'pin': dict(scope['roster_pin']), 'consumed_sha256': digest(roster_raw),
                              'count': roster.count, 'ids_sha256': digest(encode(list(roster.ids), SUPERVISOR_CAP))}
-        require(not exists(scope['once_namespace_marker']), 'once namespace already used')
+        # The marker is CREATED here (O_EXCL), so a second run of the same scope refuses before
+        # launch. A refused or failed attempt after this point has still used its namespace.
+        claim_once(scope['once_namespace_marker'], deadlines.gate('once.io', deadlines.body))
         deadlines.check('frame.before', deadlines.body)
         _frame(budget, 'preflight', {'scope': receipt['scope_consumed']['sha256'],
                                      'roster': receipt['roster']['consumed_sha256']},
@@ -631,6 +635,20 @@ def _read_once(path, open_pinned=None, gate=_no_gate, ops=os):
         require(len(raw) == fs.st_size, 'scope read length differs from descriptor size')
         return raw
     return _with_descriptor(fd, body, ops, gate)
+
+
+def _claim_once(path, gate=_no_gate, ops=os):
+    """Create the once-namespace marker atomically: O_CREAT|O_EXCL, never through a symlink; it must not exist."""
+    gate()
+    try:
+        fd = ops.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+                      | getattr(os, 'O_CLOEXEC', 0), 0o400)
+    except FileExistsError:
+        raise Refused('once namespace already used') from None
+    except OSError as error:
+        raise Refused('once namespace marker not created: ' + type(error).__name__) from None
+    ops.close(fd)
+    gate()
 
 
 def _cleanup(receipt, emission, child, data, budget, deadlines, finalizers):
