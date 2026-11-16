@@ -6,6 +6,8 @@ Two design rules apply throughout. Use Preloop and SmolVM wherever they already 
 
 **This is a source preview with synthetic examples, not an installable runner or a qualified production deployment.** Its immediately usable CI is the Python unit suite on standard GitHub-hosted runners. Those tests do not boot a VM, exercise a real engine, or prove isolation or cleanup on a live host.
 
+**Status (15 November 2026):** the private beta lane is active again. This repository stays a source subset of it: it does not carry the active lane's packet, allowlist, run records or deployment state.
+
 ## Run the unit tests
 
 Use Python 3.14 on Linux. The suites use the standard library and require no dependency installation:
@@ -15,7 +17,7 @@ python3 -I -B -m unittest discover -s tests -t . -v
 python3 -I -B -m unittest discover -s wrapper/tests -t . -v
 ```
 
-The suites contain 80 adapter/link/queue tests and 76 supervisor tests. One filesystem-permission test is skipped if run as root; use an ordinary user for the complete check. Hosted CI runs on push to `main` or `release-preview/**`, pull requests, and manual dispatch.
+The suites contain 80 adapter/link/queue tests and 76 supervisor tests. One filesystem-permission test is skipped if run as root; use an ordinary user for the complete check. Hosted CI runs on push to `main` or `release-preview/**`, pull requests, and manual dispatch. A ruleset protects the default branch: every change needs a pull request, and the `unit` check must pass.
 
 ## Source map
 
