@@ -5,7 +5,7 @@ Description=Forgehold queue watcher (one pass; at most one request)
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3.14 -I /srv/forgehold/packet/fh_watch.py /srv/forgehold/queue /srv/forgehold/packet
+ExecStart=/usr/bin/python3.14 -I @@FH_PACKET_DIR@@/fh_watch.py @@FH_QUEUE_DIR@@ @@FH_PACKET_DIR@@
 NoNewPrivileges=yes
 UMask=0077
 TimeoutStartSec=180

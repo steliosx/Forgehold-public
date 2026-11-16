@@ -203,7 +203,7 @@ def cmd_select(qd, packet):
 
 
 def live_head(repo, ref):
-    out = subprocess.run(["timeout", "-k", "2", "20", "gh", "api", "repos/example-owner/%s/git/ref/heads/%s" % (repo, ref),
+    out = subprocess.run(["timeout", "-k", "2", "20", "gh", "api", "repos/@@FH_OWNER@@/%s/git/ref/heads/%s" % (repo, ref),
                           "--jq", ".object.sha"], capture_output=True, text=True)
     h = out.stdout.strip()
     if out.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", h):
@@ -252,7 +252,7 @@ def cmd_record(qd, rid, rc, stdout_path):
     rc = int(rc)
     with open(stdout_path, encoding="utf-8", errors="replace") as f:
         text = f.read()
-    m = re.search(r"manifest_sha256=([0-9a-f]{64}) supervisor_exit=([0-9]+) evidence=(/srv/forgehold/evidence/"
+    m = re.search(r"manifest_sha256=([0-9a-f]{64}) supervisor_exit=([0-9]+) evidence=(@@FH_EVIDENCE_ROOT@@/"
                   r"fh-b3-[0-9TZ]+)\s*$", text)
     # Clean terminal: the launcher refused with no effect (30), or it reached SEALED and the supervisor exit is a pass
     # (0) or an episode verdict (10-18). Anything else (31-35, 19, 20, signals, unknown) suspends the queue.

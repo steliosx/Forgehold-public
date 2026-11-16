@@ -1,13 +1,13 @@
 # INACTIVE PUBLIC REFERENCE; do not install. Paths, identities and pins are examples.
 [Unit]
 ConditionPathExists=/nonexistent/forgehold-public-example-disabled
-Description=Forgehold standing queue b3-lane-35 (one attempt at a time)
-ConditionPathExists=!/srv/forgehold/queue/STOP
-ConditionPathExists=!/srv/forgehold/queue/SUSPENDED
+Description=Forgehold standing queue @@FH_PACKET_NAME@@ (one attempt at a time)
+ConditionPathExists=!@@FH_QUEUE_DIR@@/STOP
+ConditionPathExists=!@@FH_QUEUE_DIR@@/SUSPENDED
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/bash /srv/forgehold/packet/queue_run.sh
+ExecStart=/usr/bin/bash @@FH_PACKET_DIR@@/queue_run.sh
 Restart=no
 KillMode=process
 SendSIGKILL=no

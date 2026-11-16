@@ -4,18 +4,18 @@ printf "%s\n" "Reference example only; execution is disabled." >&2
 exit 64
 
 set -u
-P=/srv/forgehold/packet
-U=/srv/forgehold/operator/.config/systemd/user
-C=/srv/forgehold/pilot/fh-b3-control
+P=@@FH_PACKET_DIR@@
+U=@@FH_OPERATOR_HOME@@/.config/systemd/user
+C=@@FH_PILOT_DIR@@/fh-b3-control
 TOKEN=$(date -u +%Y%m%dT%H%M%SZ) || exit 30
 export FH_TOKEN=$TOKEN
-E=/srv/forgehold/evidence/fh-b3-$TOKEN
+E=@@FH_EVIDENCE_ROOT@@/fh-b3-$TOKEN
 H=$C/HOLD-$TOKEN
-IN=/srv/forgehold/lane-input
+IN=@@FH_INPUT_DIR@@
 INP="/usr/bin/python3.14 -I $P/fh_input.py"
 WFC="/usr/bin/python3.14 -I $P/fh_workflow.py"
-MARKER=/srv/forgehold/authority/owner.json
-MARKER_SHA=071b862132cc1404fa6b57730f552450d191870f4a73a9bc07bb0df69d08bfe3
+MARKER=@@FH_MARKER_FILE@@
+MARKER_SHA=@@FH_MARKER_SHA256@@
 AGREEMENT=bound-by-SHA256SUMS-hash-in-the-signed-agreement
 CUST="/usr/bin/python3.14 -I $P/fh_custody.py"
 T=$(mktemp -d) || { echo "REFUSED: no temp dir" >&2; exit 30; }
@@ -44,7 +44,7 @@ cd "$P" || refuse "packet dir missing"
 sha256sum --quiet --strict -c SHA256SUMS || refuse "packet file hash mismatch"
 if grep -l -E '@[A-Z0-9_]+@' -- $(ls -1 *.sh *.py *.json *.yml *.service *.socket 2>/dev/null) >/dev/null; then refuse "unfilled placeholder in packet"; fi
 [ "$(sha256sum < "$MARKER" | cut -d' ' -f1)" = "$MARKER_SHA" ] || refuse "ownership marker changed"
-for f in /home /srv/forgehold/operator /srv/forgehold /srv/forgehold "$IN" "$IN/INPUT.json" "$IN/INPUT.sha256"; do [ ! -L "$f" ] || refuse "symlink on input path: $f"; done
+for f in @@FH_INPUT_ANCESTORS@@ "$IN" "$IN/INPUT.json" "$IN/INPUT.sha256"; do [ ! -L "$f" ] || refuse "symlink on input path: $f"; done
 for f in "$IN/INPUT.json" "$IN/INPUT.sha256"; do
   [ -f "$f" ] && [ "$(stat -c '%a %u %g %h' "$f")" = "400 1000 1000 1" ] || refuse "input file not a 0400 uid/gid-1000 single-link regular file: $f"
 done
@@ -60,29 +60,29 @@ REPO=$(gf repository); WF=$(gf workflow); WF_SHA=$(gf workflow_sha256); JOB=$(gf
 LANE_COMMIT=$(gf commit); EXPIRY=$(gf expiry_epoch)
 export FH_REPO=$REPO FH_WORKFLOW=$WF FH_WORKFLOW_SHA256=$WF_SHA FH_JOB=$JOB FH_REF=$REF FH_COMMIT=$LANE_COMMIT FH_EXPIRY=$EXPIRY
 [ "$(date -u +%s)" -lt $((EXPIRY - 600)) ] || refuse "less than 600 s before the agreement expiry"
-QD=/srv/forgehold/queue
-KEYF=/srv/forgehold/operator/.config/forgehold-key/github-app-0.pem
-for f in /srv/forgehold/operator/.config /srv/forgehold/operator/.config/forgehold-key "$KEYF"; do [ ! -L "$f" ] || refuse "symlink on App key path: $f"; done
+QD=@@FH_QUEUE_DIR@@
+KEYF=@@FH_APP_KEY_FILE@@
+for f in @@FH_APP_KEY_ANCESTORS@@ "$KEYF"; do [ ! -L "$f" ] || refuse "symlink on App key path: $f"; done
 [ -f "$KEYF" ] && [ "$(stat -c '%a %u %g %h' "$KEYF")" = "400 1000 1000 1" ] && [ "$(stat -c %s "$KEYF")" -ge 1 ] && [ "$(stat -c %s "$KEYF")" -le 16384 ] \
   || refuse "App key file missing or not a 0400 uid/gid-1000 single-link regular file of 1-16384 bytes: $KEYF"
-OPERATOR="example operator"; [ "${FH_QUEUE:-}" != 1 ] || OPERATOR="forgehold-queue.service uid 1000"
+OPERATOR="@@FH_OPERATOR_LABEL@@"; [ "${FH_QUEUE:-}" != 1 ] || OPERATOR="forgehold-queue.service uid 1000"
 for f in "$QD/STOP" "$QD/SUSPENDED"; do [ ! -e "$f" ] && [ ! -L "$f" ] || refuse "queue $(basename "$f") present"; done
-timeout -k 2 20 gh api "repos/example-owner/$REPO/contents/.github/workflows/$WF?ref=$LANE_COMMIT" --jq .content > "$T/workflow.b64" || refuse "workflow file unreadable at the input commit"
+timeout -k 2 20 gh api "repos/@@FH_OWNER@@/$REPO/contents/.github/workflows/$WF?ref=$LANE_COMMIT" --jq .content > "$T/workflow.b64" || refuse "workflow file unreadable at the input commit"
 python3 -I -c 'import base64,sys; open(sys.argv[2],"wb").write(base64.b64decode(open(sys.argv[1]).read()))' "$T/workflow.b64" "$T/workflow.yml" || refuse "workflow decode"
 $WFC check "$T/workflow.yml" "$JOB" "$WF_SHA" || refuse "workflow at the input commit is not the agreed single-job subset"
 for f in "$E" "$H"; do [ ! -e "$f" ] && [ ! -L "$f" ] || refuse "already exists: $f"; done
 for f in "$U/forgehold-lane-b3.service" "$U/forgehold-lane-b3.socket" "$C" "$C/bin" "$C/bin/smolvm"; do [ ! -L "$f" ] || refuse "symlink: $f"; done
 for h in "$C"/HOLD-*; do [ -e "$h" ] || continue; [ "$(wc -l < "$h")" -ge 3 ] || refuse "earlier attempt not terminal: $h"; done
-[ ! -e /srv/forgehold/pilot/attempt3-control/HOLD ] || refuse "Example project lane HOLD exists"
+[ ! -e @@FH_PILOT_DIR@@/attempt3-control/HOLD ] || refuse "Example project lane HOLD exists"
 inactive() { local st; st=$(timeout -k 2 5 systemctl --user is-active "$1" 2>/dev/null); case $st in inactive|failed) return 0 ;; *) refuse "unit $1 state '${st:-unreadable}'" ;; esac; }
 inactive forgehold-lane-b3.service; inactive forgehold-lane-b3.socket
 for a in "" -a4 -a5 -a6 -a7 -a8; do for k in service socket; do inactive "preloop-pilot$a.$k"; done; done
 ss -ltn > "$T/listeners" 2>&1 || refuse "listener read failed"
 ! grep -Eq '(127\.0\.0\.1|0\.0\.0\.0|\[::\]|\*):9090 ' "$T/listeners" || refuse "port 9090 already listening (127.0.0.1, 0.0.0.0, [::] or *)"
 reg() { timeout -k 2 20 "$@" | python3 -I -c 'import json,sys; sys.exit(0 if json.loads(sys.stdin.read()) == [] else 1)'; }
-reg env -i bash --noprofile --norc -c '. /srv/forgehold/pilot/env.sh; export SMOLVM_DATA_DIR=/srv/forgehold/pilot/.preloop/smolvm-fh-b3; exec smolvm machine ls --json' || refuse "lane registry not verified empty"
+reg env -i bash --noprofile --norc -c '. @@FH_PILOT_DIR@@/env.sh; export SMOLVM_DATA_DIR=@@FH_PILOT_DIR@@/.preloop/smolvm-fh-b3; exec smolvm machine ls --json' || refuse "lane registry not verified empty"
 SCAN="/usr/bin/python3.14 -I $P/fh_hostscan.py"
-timeout -k 2 20 /srv/forgehold/operator/.local/bin/smolvm machine ls --json > "$T/lab.json" || refuse "lab registry unreadable"
+timeout -k 2 20 @@FH_OPERATOR_HOME@@/.local/bin/smolvm machine ls --json > "$T/lab.json" || refuse "lab registry unreadable"
 LAB=$($SCAN lab preloop-runner-0-1 < "$T/lab.json") || refuse "lab registry has our machine name or is not a list"
 VMS=$($SCAN procs 'libkrun VM') || refuse "a libkrun VM executable is unreadable"
 [ "${VMS%% *}" = 0 ] || refuse "a lane libkrun VM is already running ($VMS own/foreign)"
@@ -97,13 +97,13 @@ done
 [ "$ok" -ge 3 ] || refuse "thermal not below 85000 for 3 consecutive 1 s readings within 120 s (last ${THERM##* })"
 THERM=$(printf '%s' "$THERM" | tr ' ' '\n' | tail -n 10 | tr '\n' ' ')
 MEM=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo); [[ $MEM =~ ^[0-9]+$ ]] && [ "$MEM" -ge 4718592 ] || refuse "MemAvailable ${MEM:-unread} kB below 4718592"
-[ "$(timeout -k 2 60 sha256sum < /srv/forgehold/pilot/.preloop/vms/preloop-example-images-preloop-ubuntu-24.04-x86_64-x86_64-59e464339594c0cffabcf6ee7ff4227a157bd607ce77e2e000e8304ae008c92a | cut -d' ' -f1)" = 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 ] || refuse "pack hash"
+[ "$(timeout -k 2 60 sha256sum < @@FH_PILOT_DIR@@/.preloop/vms/@@FH_PACK_NAME@@ | cut -d' ' -f1)" = @@FH_PACK_SHA256@@ ] || refuse "pack hash"
 
 printf 'FH_B3_HOLD token=%s INITIAL_INCOMPLETE\npacket=%s agreement=%s E=%s input=%s\n' "$TOKEN" "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" "$AGREEMENT" "$E" "$INPUT_SHA" > "$T/hold" || refuse "hold text"
 $CUST reserve "$E" "$C" "HOLD-$TOKEN" "$T/hold"; rc=$?
 case $rc in 0) RESERVED=1 ;; 10) refuse "custody reservation refused (nothing created)" ;; *) RESERVED=1; custody_fail "reservation rc=$rc" ;; esac
 STAGE=admission-record
-printf '{"schema":"FH_LANE_ADMISSION_3","token":"%s","agreement":"%s","packet_sums_sha256":"%s","marker_sha256":"%s","expiry_epoch":%s,"input_sha256":"%s","repository":"example-owner/%s","workflow":"%s","job":"%s","ref":"%s","commit":"%s","operator":"%s","admitted_utc":"%s","libkrun_own_foreign":"%s","lab_registry_count_names":"%s","memavail_kb":%s,"thermal_last_samples":"%s"}\n' \
+printf '{"schema":"FH_LANE_ADMISSION_3","token":"%s","agreement":"%s","packet_sums_sha256":"%s","marker_sha256":"%s","expiry_epoch":%s,"input_sha256":"%s","repository":"@@FH_OWNER@@/%s","workflow":"%s","job":"%s","ref":"%s","commit":"%s","operator":"%s","admitted_utc":"%s","libkrun_own_foreign":"%s","lab_registry_count_names":"%s","memavail_kb":%s,"thermal_last_samples":"%s"}\n' \
   "$TOKEN" "$AGREEMENT" "$(sha256sum < SHA256SUMS | cut -d' ' -f1)" "$MARKER_SHA" "$EXPIRY" "$INPUT_SHA" "$REPO" "$WF" "$JOB" "$REF" "$LANE_COMMIT" "$OPERATOR" "$(date -u +%FT%TZ)" "$VMS" "$LAB" "$MEM" "$THERM" > "$T/adm" || custody_fail "admission text"
 $CUST new "$E/ADMISSION.json" "$T/adm" || custody_fail "admission record not written; no installation"
 $SCAN detail 'libkrun VM' > "$T/foreign-vms" 2>&1; $CUST new "$E/admission-libkrun.jsonl" "$T/foreign-vms" || custody_fail "admission VM detail not written"

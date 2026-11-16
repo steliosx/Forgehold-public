@@ -56,13 +56,13 @@ HEX64 = re.compile(r"[0-9a-f]{64}")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 UTC = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 SUMLINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]{1,100})")
-MSGID = re.compile(r"[0-9]{8}T[0-9]{6}Z-example-reviewer-[0-9a-f]{8}")
+MSGID = re.compile(r"[0-9]{8}T[0-9]{6}Z-@@FH_REVIEWER_ID@@-[0-9a-f]{8}")
 TEMP = re.compile(r"watch-req\.tmp-[0-9]{1,10}-[0-9]{1,25}")
 WHO = "forgehold-watch"
-MAILBOX = "/srv/forgehold/reviewer-mailbox/messages"  
+MAILBOX = "@@FH_MAILBOX_DIR@@"
 
-REVIEWER_KEY_ID = "UNCONFIGURED"
-REVIEWER_PUBKEY = "UNCONFIGURED"
+REVIEWER_KEY_ID = "@@FH_REVIEWER_KEY_ID@@"
+REVIEWER_PUBKEY = "@@FH_REVIEWER_PUBKEY@@"
 MAILBOX_SCHEMA = "agent-mailbox/1"
 # W4r: the only accepted review evidence is an exact line in the signed body or a signed artifact. Any line containing
 # the prefix must match REVIEW_LINE exactly, or the whole message is rejected as ambiguous.
@@ -375,7 +375,7 @@ def signed_message(qd, msg):
         raise ValueError("signed trusted comment does not name this message")
     env = jload(members["envelope.json"])
     if not isinstance(env, dict) or env.get("schema") != MAILBOX_SCHEMA or env.get("id") != msg \
-            or env.get("from") != "example-reviewer" or env.get("to") != "example-operator" \
+            or env.get("from") != "@@FH_REVIEWER_ID@@" or env.get("to") != "@@FH_OPERATOR_ID@@" \
             or env.get("signer_key_id") != REVIEWER_KEY_ID or not isinstance(env.get("body"), str) \
             or not isinstance(env.get("artifacts"), list):
         raise ValueError("signed envelope fields")
