@@ -17,7 +17,7 @@ python3 -I -B -m unittest discover -s tests -t . -v
 python3 -I -B -m unittest discover -s wrapper/tests -t . -v
 ```
 
-The suites contain 84 adapter/link/queue tests and 80 supervisor tests. One filesystem-permission test is skipped if run as root; use an ordinary user for the complete check. Hosted CI runs on push to `main` or `release-preview/**`, pull requests, and manual dispatch. A ruleset protects the default branch: every change needs a pull request, and the `unit` check must pass.
+The suites contain 84 adapter/link/queue tests and 80 supervisor tests. One filesystem-permission test is skipped if run as root; use an ordinary user for the complete check. Hosted CI runs on push to `main` or `release-preview/**`, pull requests, and manual dispatch. A ruleset protects the default branch: every change needs a pull request, and the `unit` check must pass. A second workflow audits the workflow files with zizmor; it is informational, not a required check.
 
 ## Source map
 

@@ -1,0 +1,31 @@
+# Static audit of this repository's GitHub Actions workflows with zizmor.
+# Informational for now: not a required check. No third-party actions; the tool is installed at a
+# fixed version with a pinned wheel hash; the token is read-only (zizmor's online audits use it).
+name: Workflow audit (zizmor)
+on:
+  push:
+    branches: [main, "release-preview/**"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  zizmor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.14'
+      - name: Install zizmor 1.31.1 (wheel hash pinned)
+        run: |
+          printf 'zizmor==1.31.1 --hash=sha256:58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410\n' > "$RUNNER_TEMP/zizmor-req.txt"
+          python -m pip install --no-deps --require-hashes -r "$RUNNER_TEMP/zizmor-req.txt"
+          zizmor --version
+      - name: Audit .github/workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --format=github .github/workflows
