@@ -5,19 +5,19 @@ exit 64
 
 set -euo pipefail
 umask 077
-readonly PILOT=/srv/forgehold/pilot
+readonly PILOT=@@FH_PILOT_DIR@@
 readonly DATA=$PILOT/.preloop/smolvm-fh-b3
 readonly CONTROL=$PILOT/fh-b3-control
 readonly CLAIM=$CONTROL/create-consumed
 readonly NAME=preloop-runner-0-1
 readonly ORIGINAL=$PILOT/images/preloop-ubuntu-24.04-x86_64
-readonly PACK=$PILOT/.preloop/vms/preloop-example-images-preloop-ubuntu-24.04-x86_64-x86_64-59e464339594c0cffabcf6ee7ff4227a157bd607ce77e2e000e8304ae008c92a
+readonly PACK=$PILOT/.preloop/vms/@@FH_PACK_NAME@@
 readonly REAL=$PILOT/.smolvm/smolvm
 fail() { printf 'PILOT_CREATE_GATE: %s\n' "$1" >&2; exit 78; }
 pin() { printf '%s  %s\n' "$1" "$2" | /usr/bin/sha256sum --check --status || fail 'checksum mismatch'; }
 readonly EXPIRY_PERMIT=$CONTROL/expiry-permit
 readonly STANDING_END=4000000000
-readonly QUEUE_DIR=/srv/forgehold/queue
+readonly QUEUE_DIR=@@FH_QUEUE_DIR@@
 live_allowed() {
     local e
     [[ -f $EXPIRY_PERMIT && ! -L $EXPIRY_PERMIT ]] || fail 'expiry permit missing'
@@ -101,14 +101,14 @@ case $2 in
         done
         [[ ${SMOLVM_EGRESS_FLOOR:-} == strict ]] || fail 'public-only egress floor required'
         [[ ! -L "$PACK" && ! -L "$ORIGINAL" ]] || fail 'image path symlinked'
-        pin 8acd07687eeb290cb2962e4655ceb118f8adb7847fc2df414035d4b972d8fab3 "$PILOT/.local/bin/preloop"
-        pin 0da9c27e69fcf130ec417eb5a910ccd812144b1eaed071d85b64b6f0f40410fa "$PILOT/.local/lib/preloop/runner/x86_64-unknown-linux-gnu/preloop-runner"
-        pin 27920f7a18b0b346e2fa7ddb351f3a8d89590e2ab9febfdfee2a97be56493fe0 "$REAL"
-        pin a568b57b0229c059d354a50a963413ced32747876b04ee66948fde4639f286ec "$PILOT/.smolvm/smolvm-bin"
-        pin 64a397ca963530c3dbf11cffea87f321da25c224d26d6f7f52619b8ccf5a9069 "$PILOT/.smolvm/lib/libkrun.so"
-        pin 75db53d13c696ce0bcb872775b2b11496e15c670f7fb2aea9fdd82a0735ad5f2 "$PILOT/.smolvm/lib/libkrunfw.so.5.5.0"
-        pin 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 "$ORIGINAL"
-        pin 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 "$PACK"
+        pin @@FH_PIN_PRELOOP@@ "$PILOT/.local/bin/preloop"
+        pin @@FH_PIN_RUNNER@@ "$PILOT/.local/lib/preloop/runner/x86_64-unknown-linux-gnu/preloop-runner"
+        pin @@FH_PIN_REAL@@ "$REAL"
+        pin @@FH_PIN_SMOLVM_BIN@@ "$PILOT/.smolvm/smolvm-bin"
+        pin @@FH_PIN_LIBKRUN@@ "$PILOT/.smolvm/lib/libkrun.so"
+        pin @@FH_PIN_LIBKRUNFW@@ "$PILOT/.smolvm/lib/libkrunfw.so.5.5.0"
+        pin @@FH_PACK_SHA256@@ "$ORIGINAL"
+        pin @@FH_PACK_SHA256@@ "$PACK"
         free=$(/usr/bin/df --output=avail -B1 "$PILOT") || fail 'free space unreadable'
         free=${free##*$'\n'}; free=${free//[[:space:]]/}
         [[ $free =~ ^[0-9]+$ && $free -ge 68719476736 ]] || fail '64 GiB free-space gate failed'

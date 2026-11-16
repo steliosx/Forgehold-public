@@ -4,10 +4,10 @@ printf "%s\n" "Reference example only; execution is disabled." >&2
 exit 64
 
 set -u
-P=/srv/forgehold/packet
-QD=/srv/forgehold/queue
-IN=/srv/forgehold/lane-input
-LOCK=/srv/forgehold/host-heavy.lock
+P=@@FH_PACKET_DIR@@
+QD=@@FH_QUEUE_DIR@@
+IN=@@FH_INPUT_DIR@@
+LOCK=@@FH_HOST_LOCK@@
 Q="/usr/bin/python3.14 -I $P/fh_queue.py"
 HEADSUP_S=60
 PHASE=wait STOPREQ= LPID= RID= NAPPID=

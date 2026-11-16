@@ -1,8 +1,8 @@
 #!/usr/bin/python3 -I
 
 # run the lane alongside them). Counts processes by exact comm and splits them into OURS (the executable resolves
-# under the lane's pilot home, e.g. /srv/forgehold/pilot/.smolvm/smolvm-bin) and FOREIGN (anything else, e.g.
-# the lab SmolVM /srv/forgehold/operator/.smolvm/smolvm-bin used by other projects). Observation only; it never signals anything.
+# under the lane's pilot home, e.g. @@FH_PILOT_DIR@@/.smolvm/smolvm-bin) and FOREIGN (anything else, e.g.
+# the lab SmolVM @@FH_OPERATOR_HOME@@/.smolvm/smolvm-bin used by other projects). Observation only; it never signals anything.
 #   fh_hostscan.py procs <comm>   -> prints "<own> <foreign>"; exit 0, or exit 2 if a matching process of our uid
 #                                    has neither a readable executable nor a readable cgroup (fail closed). OURS also
 #                                    covers any process in the forgehold-lane-b3.service cgroup (a non-dumpable VM
@@ -15,7 +15,7 @@ import json
 import os
 import sys
 
-OWN_PREFIX = "/srv/forgehold/pilot/"
+OWN_PREFIX = "@@FH_PILOT_DIR@@/"
 OWN_CGROUP = "/forgehold-lane-b3.service"
 
 

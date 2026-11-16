@@ -4,7 +4,7 @@ printf "%s\n" "Reference example only; execution is disabled." >&2
 exit 64
 
 set -u
-PH=/srv/forgehold/pilot
+PH=@@FH_PILOT_DIR@@
 EXPIRY=${FH_EXPIRY:?}; SHA=${FH_COMMIT:?}; REPO=${FH_REPO:?}; WF=${FH_WORKFLOW:?}; WF_SHA=${FH_WORKFLOW_SHA256:?}
 JOB=${FH_JOB:?}; GREF=${FH_REF:?}
 [[ $EXPIRY =~ ^[0-9]{10}$ && $SHA =~ ^[0-9a-f]{40}$ && $REPO =~ ^[A-Za-z0-9_.-]{1,100}$ && $REPO != . && $REPO != ..
@@ -12,25 +12,25 @@ JOB=${FH_JOB:?}; GREF=${FH_REF:?}
    && $GREF =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$ && ${#GREF} -le 100 && $GREF != *..*
    && $GREF != refs/* && $GREF != *.lock && $GREF != */.* ]] || { echo "REFUSED: input environment invalid" >&2; exit 2; }
 NAME=preloop-runner-0-1
-PACK=$PH/.preloop/vms/preloop-example-images-preloop-ubuntu-24.04-x86_64-x86_64-59e464339594c0cffabcf6ee7ff4227a157bd607ce77e2e000e8304ae008c92a
+PACK=$PH/.preloop/vms/@@FH_PACK_NAME@@
 PERMIT=$PH/fh-b3-control/create-consumed
 TOKEN=${FH_TOKEN:?FH_TOKEN not set by run_fh_b3.sh}
 HOLD=$PH/fh-b3-control/HOLD-$TOKEN
-CUST="/usr/bin/python3.14 -I /srv/forgehold/packet/fh_custody.py"
-SCAN="/usr/bin/python3.14 -I /srv/forgehold/packet/fh_hostscan.py"
-WFC="/usr/bin/python3.14 -I /srv/forgehold/packet/fh_workflow.py"
+CUST="/usr/bin/python3.14 -I @@FH_PACKET_DIR@@/fh_custody.py"
+SCAN="/usr/bin/python3.14 -I @@FH_PACKET_DIR@@/fh_hostscan.py"
+WFC="/usr/bin/python3.14 -I @@FH_PACKET_DIR@@/fh_workflow.py"
 ZHOLD=$PH/attempt3-control/HOLD
-REF=engine-token-4d91f1065f28b6790bafae4fefae9a47445405252a1964a0049093edbc88bda9
+REF=@@FH_ENGINE_TOKEN_REF@@
 STOPS='PILOT_CREATE_GATE|packed golden fork base unavailable|building golden for environment|fork base busy; creating runner independently|falling back to independent OCI creation|install hosted apt baseline|on-demand runner failed|on-demand runner slot error|Stale file handle|building its golden locally|downloading packed golden|removed orphaned machine data dir|IrqsExhausted|runs-on unsatisfiable'
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 
 b() { local s=$1; shift; [ "$s" -ge 1 ] || return 124; timeout -k 2 "$s" "$@"; }
 log() { echo "$(date -u +%T.%3N) $*" >> "$L"; }
-pl_status()   { b "$1" env -i bash --noprofile --norc -c '. /srv/forgehold/pilot/env.sh; exec preloop status --json'; }
+pl_status()   { b "$1" env -i bash --noprofile --norc -c '. @@FH_PILOT_DIR@@/env.sh; exec preloop status --json'; }
 pl_cancel()   { [[ $2 =~ $UUID_RE ]] || return 9
-                b "$1" env -i RUNID="$2" bash --noprofile --norc -c '. /srv/forgehold/pilot/env.sh; exec preloop cancel "$RUNID"'; }
-pl_machines() { b "$1" env -i bash --noprofile --norc -c '. /srv/forgehold/pilot/env.sh; export SMOLVM_DATA_DIR=/srv/forgehold/pilot/.preloop/smolvm-fh-b3; exec smolvm machine ls --json'; }
-lab_machines(){ b "$1" /srv/forgehold/operator/.local/bin/smolvm machine ls --json; }
+                b "$1" env -i RUNID="$2" bash --noprofile --norc -c '. @@FH_PILOT_DIR@@/env.sh; exec preloop cancel "$RUNID"'; }
+pl_machines() { b "$1" env -i bash --noprofile --norc -c '. @@FH_PILOT_DIR@@/env.sh; export SMOLVM_DATA_DIR=@@FH_PILOT_DIR@@/.preloop/smolvm-fh-b3; exec smolvm machine ls --json'; }
+lab_machines(){ b "$1" @@FH_OPERATOR_HOME@@/.local/bin/smolvm machine ls --json; }
 journal()     { b "$1" journalctl --user -u forgehold-lane-b3 --no-pager -o cat --since "$SINCE UTC"; }
 empty_json_list() { python3 -I -c 'import json,sys; d=json.loads(sys.stdin.read()); sys.exit(0 if d == [] else 1)'; }
 present() { local o; o=$(b 3 $SCAN procs "$1") || { echo 99; return; }; [ "${o%% *}" = 0 ] && echo 0 || echo 1; }
@@ -45,7 +45,7 @@ d=json.load(open(sys.argv[1])); s=d.get("submission") or {}
 pre={x.get("run_id") for x in json.load(open(sys.argv[4]))}
 repo,wf,wfsha,job=sys.argv[5],sys.argv[6],sys.argv[7],sys.argv[8]
 y=s.get("workflow_yaml")
-ok=(d.get("run_id")==sys.argv[2] and s.get("repository")=="example-owner/"+repo
+ok=(d.get("run_id")==sys.argv[2] and s.get("repository")=="@@FH_OWNER@@/"+repo
     and (s.get("workflow_file")==wf or str(s.get("workflow_path","")).endswith("/"+wf))
     and sys.argv[3] in (s.get("sha"), s.get("resolved_sha")) and sys.argv[2] not in pre
     and isinstance(y,str) and hashlib.sha256(y.encode()).hexdigest()==wfsha
@@ -91,7 +91,7 @@ if [ "${1:-}" = --cleanup ]; then
   [ -d "$PERMIT" ] && log "permit consumed and retained" || log "permit not consumed"
   journal 10 > "$D/journal.txt" 2>>"$L"
   if [[ $CHECK =~ ^[0-9]{1,20}$ ]]; then
-    b 10 gh api "repos/example-owner/$REPO/check-runs/$CHECK" > "$D/check-run.json" 2>>"$L" || log "check-run read failed (UNKNOWN)"
+    b 10 gh api "repos/@@FH_OWNER@@/$REPO/check-runs/$CHECK" > "$D/check-run.json" 2>>"$L" || log "check-run read failed (UNKNOWN)"
   fi
   pl_machines 8 > "$D/machines-after.json" 2>>"$L"
   [ "$V" = 0 ] && { log "cleanup verified"; exit 0; }
@@ -155,12 +155,12 @@ print(" ".join(map(str,bad))); sys.exit(1 if bad or len(d)>=200 else 0)' "$D/run
   [ "$ok" -ge 3 ] || fail 12 "thermal not below 85000 for 3 consecutive 1 s readings within 60 s (last $r)"
   log "memavail_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo) free_GiB=$(df -B1G --output=avail /home | tail -1 | tr -d ' ')"
   log "psi_memory: $(tr '\n' ' ' < /proc/pressure/memory 2>/dev/null) oom_kill=$(awk '/oom_kill/ {print $2}' /proc/vmstat)"
-  r=$(b 20 gh api "repos/example-owner/$REPO/git/ref/heads/$GREF" --jq .object.sha) && [ "$r" = "$SHA" ] || fail 12 "ref heads/$GREF not verified at the input commit"
-  b 20 gh api "repos/example-owner/$REPO/contents/.github/workflows/$WF?ref=$SHA" --jq .content > "$D/workflow.b64" 2>>"$L" || fail 12 "workflow file unreadable at the commit"
+  r=$(b 20 gh api "repos/@@FH_OWNER@@/$REPO/git/ref/heads/$GREF" --jq .object.sha) && [ "$r" = "$SHA" ] || fail 12 "ref heads/$GREF not verified at the input commit"
+  b 20 gh api "repos/@@FH_OWNER@@/$REPO/contents/.github/workflows/$WF?ref=$SHA" --jq .content > "$D/workflow.b64" 2>>"$L" || fail 12 "workflow file unreadable at the commit"
   python3 -I -c 'import base64,sys; open(sys.argv[2],"wb").write(base64.b64decode(open(sys.argv[1]).read()))' "$D/workflow.b64" "$D/workflow.yml" || fail 12 "workflow decode"
   $WFC check "$D/workflow.yml" "$JOB" "$WF_SHA" 2>>"$L" || fail 12 "workflow at the commit is not the agreed single-job subset (sha256/job/trigger/labels)"
   log "workflow $WF at $SHA verified (sha256 $WF_SHA)"
-  h=$(b 60 sha256sum < "$PACK" | cut -d' ' -f1) && [ "$h" = 53dd635842d6bcc7e5c2600b187cfe0863ba7888206aaf7ac848af5a812760b7 ] || fail 12 "pack hash not verified"
+  h=$(b 60 sha256sum < "$PACK" | cut -d' ' -f1) && [ "$h" = @@FH_PACK_SHA256@@ ] || fail 12 "pack hash not verified"
   [ ! -e "$PERMIT" ] || fail 12 "permit consumed before the POST"
   not_expired
   TPOST=$SECONDS; CD=$((TPOST + 60)); RGD=$((TPOST + 300))
@@ -170,7 +170,7 @@ print(" ".join(map(str,bad))); sys.exit(1 if bad or len(d)>=200 else 0)' "$D/run
   code=$({ printf 'Authorization: Bearer '; b 10 secret-tool lookup service preloop username "$REF"; printf '\n'; } \
     | b 40 curl -sS -m 30 -o "$D/dispatch-body.txt" -w '%{http_code}' -H @- -H 'Accept: application/vnd.github+json' \
         -H 'Content-Type: application/json' -X POST --data @"$D/dispatch-request.json" \
-        "http://127.0.0.1:9090/repos/example-owner/$REPO/actions/workflows/$WF/dispatches" 2>> "$L")
+        "http://127.0.0.1:9090/repos/@@FH_OWNER@@/$REPO/actions/workflows/$WF/dispatches" 2>> "$L")
   log "POST http=${code:-none}"; [ "$code" = 204 ] || fail 13 "POST not accepted"
   RUN= CHECK=
   until [ -n "$CHECK" ]; do
@@ -207,7 +207,7 @@ print(" ".join(map(str,bad))); sys.exit(1 if bad or len(d)>=200 else 0)' "$D/run
     fi
     if [ -z "$REG" ]; then JC=$(left $RGD 15); GC=$(left $RGD 20); else JC=15; GC=20; fi
     [ -n "$REG" ] || [ "$SECONDS" -lt "$RGD" ] || fail 15 "no runner registration within 300 s of POST start"
-    st=$(b "$GC" gh api "repos/example-owner/$REPO/check-runs/$CHECK" --jq '"\(.status)/\(.conclusion)"' 2>>"$L")
+    st=$(b "$GC" gh api "repos/@@FH_OWNER@@/$REPO/check-runs/$CHECK" --jq '"\(.status)/\(.conclusion)"' 2>>"$L")
     case $st in completed/*) ;; *)
       out=$(journal "$JC") || fail 17 "journal unreadable"
       hit=$(printf '%s' "$out" | grep -m1 -o -E "$STOPS"); [ -z "$hit" ] || fail 16 "journal stop signal [$hit]"

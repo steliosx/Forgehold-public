@@ -9,23 +9,23 @@ StartLimitBurst=1
 
 [Service]
 Type=simple
-ExecStart=/srv/forgehold/pilot/.local/bin/preloop serve
-WorkingDirectory=/srv/forgehold/pilot
-Environment=PRELOOP_HOME=/srv/forgehold/pilot/.preloop
-Environment=PRELOOP_STORE_URL=/srv/forgehold/pilot/.preloop/state-fh-b3/preloop.db
-LoadCredential=github-app-key:/srv/forgehold/operator/.config/forgehold-key/github-app-0.pem
-Environment=PRELOOP_GITHUB_APP_ID=0
+ExecStart=@@FH_PILOT_DIR@@/.local/bin/preloop serve
+WorkingDirectory=@@FH_PILOT_DIR@@
+Environment=PRELOOP_HOME=@@FH_PILOT_DIR@@/.preloop
+Environment=PRELOOP_STORE_URL=@@FH_PILOT_DIR@@/.preloop/state-fh-b3/preloop.db
+LoadCredential=github-app-key:@@FH_APP_KEY_FILE@@
+Environment=PRELOOP_GITHUB_APP_ID=@@FH_APP_ID@@
 Environment=PRELOOP_GITHUB_APP_PEM_FILE=%d/github-app-key
 UnsetEnvironment=PRELOOP_GITHUB_APP_PEM PRELOOP_GITHUB_APP_PRIVATE_KEY PRELOOP_GITHUB_APP_PRIVATE_KEY_PATH
-Environment=HOME=/srv/forgehold/pilot
-Environment=XDG_DATA_HOME=/srv/forgehold/pilot/.local/share
-Environment=XDG_CONFIG_HOME=/srv/forgehold/pilot/.config
-Environment=XDG_CACHE_HOME=/srv/forgehold/pilot/.cache
-Environment=XDG_STATE_HOME=/srv/forgehold/pilot/.local/state
-Environment=XDG_RUNTIME_DIR=/srv/forgehold/pilot/run
-Environment=SMOLVM_DATA_DIR=/srv/forgehold/pilot/.preloop/smolvm-fh-b3
+Environment=HOME=@@FH_PILOT_DIR@@
+Environment=XDG_DATA_HOME=@@FH_PILOT_DIR@@/.local/share
+Environment=XDG_CONFIG_HOME=@@FH_PILOT_DIR@@/.config
+Environment=XDG_CACHE_HOME=@@FH_PILOT_DIR@@/.cache
+Environment=XDG_STATE_HOME=@@FH_PILOT_DIR@@/.local/state
+Environment=XDG_RUNTIME_DIR=@@FH_PILOT_DIR@@/run
+Environment=SMOLVM_DATA_DIR=@@FH_PILOT_DIR@@/.preloop/smolvm-fh-b3
 Environment=SMOLVM_EGRESS_FLOOR=strict
-Environment=PATH=/srv/forgehold/pilot/fh-b3-control/bin:/srv/forgehold/pilot/.local/bin:/usr/bin:/bin
+Environment=PATH=@@FH_PILOT_DIR@@/fh-b3-control/bin:@@FH_PILOT_DIR@@/.local/bin:/usr/bin:/bin
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 Environment=PRELOOP_SMOLVM_RELEASE_VERSION=1.19.0
 Environment=PRELOOP_LISTEN=127.0.0.1:9090
@@ -37,7 +37,7 @@ Environment=PRELOOP_RUNNER_STORAGE_GB=20
 Environment=PRELOOP_RUNNER_MIN_FREE_DISK_GB=64
 Environment=PRELOOP_RUNNER_LABELS=X64,forgehold
 Environment=PRELOOP_USE_FORK=false
-Environment=PRELOOP_RUNNER_BASE_IMAGE=/srv/forgehold/pilot/images/preloop-ubuntu-24.04-x86_64
+Environment=PRELOOP_RUNNER_BASE_IMAGE=@@FH_PILOT_DIR@@/images/preloop-ubuntu-24.04-x86_64
 Environment=PRELOOP_USE_PACKED_GOLDEN=true
 Environment=SMOLVM_KRUN_LOG_LEVEL=1
 Environment=PRELOOP_GOLDEN_URL=https://github.com/preloopdev/preloop/releases/download/v0.33.9/preloop-ubuntu-24.04-x86_64
@@ -56,9 +56,9 @@ ProtectClock=true
 LockPersonality=true
 RestrictRealtime=true
 CapabilityBoundingSet=
-ReadWritePaths=/srv/forgehold/pilot
-ReadOnlyPaths=/srv/forgehold/pilot/.local/bin /srv/forgehold/pilot/.local/lib
-ReadOnlyPaths=/srv/forgehold/pilot/.preloop/smolvm /srv/forgehold/pilot/images /srv/forgehold/pilot/.preloop/vms /srv/forgehold/pilot/.smolvm/smolvm /srv/forgehold/pilot/.smolvm/smolvm-bin /srv/forgehold/pilot/.smolvm/lib /srv/forgehold/pilot/attempt3-control/bin /srv/forgehold/pilot/attempt4-control/bin /srv/forgehold/pilot/attempt5-control/bin /srv/forgehold/pilot/attempt6-control/bin /srv/forgehold/pilot/attempt7-control/bin /srv/forgehold/pilot/attempt8-control/bin /srv/forgehold/pilot/fh-b3-control/bin
+ReadWritePaths=@@FH_PILOT_DIR@@
+ReadOnlyPaths=@@FH_PILOT_DIR@@/.local/bin @@FH_PILOT_DIR@@/.local/lib
+ReadOnlyPaths=@@FH_PILOT_DIR@@/.preloop/smolvm @@FH_PILOT_DIR@@/images @@FH_PILOT_DIR@@/.preloop/vms @@FH_PILOT_DIR@@/.smolvm/smolvm @@FH_PILOT_DIR@@/.smolvm/smolvm-bin @@FH_PILOT_DIR@@/.smolvm/lib @@FH_PILOT_DIR@@/attempt3-control/bin @@FH_PILOT_DIR@@/attempt4-control/bin @@FH_PILOT_DIR@@/attempt5-control/bin @@FH_PILOT_DIR@@/attempt6-control/bin @@FH_PILOT_DIR@@/attempt7-control/bin @@FH_PILOT_DIR@@/attempt8-control/bin @@FH_PILOT_DIR@@/fh-b3-control/bin
 
 [Install]
 WantedBy=default.target
