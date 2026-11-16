@@ -1,8 +1,8 @@
 """Definitions for supervisor successor 03; no child process is used, and no real file or descriptor except in
-ReadOnceTests (a temporary directory with a small file and a symlink, to exercise _read_once's own checks).
+ReadOnceTests and ClaimOnceTests (temporary directories, to exercise _read_once's and _claim_once's own checks).
 
 Everything main() touches outside pure computation is injected through its keyword-only seams: now,
-writer, popen, collect, open_pinned, read_once, sink_check, exists; open_pinned/_read_once take `ops` and
+writer, popen, collect, open_pinned, read_once, sink_check, claim_once; open_pinned/_read_once take `ops` and
 `gate`. The fakes model an exited or live child, a writer that acknowledges partially or raises, a clock that
 moves by script or by fake hooks, pinned files that change between reads, and descriptor operations that
 fail in chosen combinations. Rows that need a real child (ignored kill, stalled reap, escaped descendant,
@@ -459,6 +459,36 @@ class OpenPinnedTests(unittest.TestCase):
         self.assertEqual(receipt['status'], sv.STATUS_UNKNOWN)
 
 
+class ClaimOnceTests(unittest.TestCase):
+    """_claim_once creates the marker with O_EXCL; any existing entry, even a dangling symlink, refuses."""
+
+    def test_first_claim_creates_the_marker_and_a_second_refuses(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            marker = os.path.join(d, '.once')
+            sv._claim_once(marker)
+            self.assertTrue(stat.S_ISREG(os.lstat(marker).st_mode))
+            with self.assertRaisesRegex(Refused, 'once namespace already used'):
+                sv._claim_once(marker)
+
+    def test_dangling_symlink_refuses_and_its_target_is_not_created(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            target, marker = os.path.join(d, 'target'), os.path.join(d, '.once')
+            os.symlink(target, marker)
+            with self.assertRaisesRegex(Refused, 'once namespace already used'):
+                sv._claim_once(marker)
+            self.assertFalse(os.path.lexists(target))
+
+    def test_missing_folder_refuses_without_creating_it(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            marker = os.path.join(d, 'absent', '.once')
+            with self.assertRaisesRegex(Refused, 'once namespace marker not created: FileNotFoundError'):
+                sv._claim_once(marker)
+            self.assertFalse(os.path.lexists(os.path.dirname(marker)))
+
+
 class ReadOnceTests(unittest.TestCase):
     """_read_once's path and identity checks, which every main() test fakes out."""
 
@@ -617,8 +647,11 @@ class MainPathModelTests(unittest.TestCase):
         self.output = terminal_for(self.ids)
         self.scope_raw, self.files = build_scope_and_files(self.roster_raw)
 
-    def run_main(self, sink, clock, child=None, output=None, files=None, exists=lambda p: False,
+    def run_main(self, sink, clock, child=None, output=None, files=None, claim_once=None,
                  read_once=None, collect=None):
+        if claim_once is None:
+            def claim_once(path, gate):       # models the real claim: one gate before and one after
+                gate(); gate()
         child = FakeChild() if child is None else child
         output = self.output if output is None else output
         files = self.files if files is None else files
@@ -627,7 +660,7 @@ class MainPathModelTests(unittest.TestCase):
                 return files({'path': path, 'bytes': len(raw), 'mode': '0400', 'sha256': sv.digest(raw)}, gate=gate)
         collect = (lambda c, d, f: output) if collect is None else collect
         return sv.main(['/r/scope.json'], now=clock, writer=sink, popen=lambda *a, **k: child, collect=collect,
-                       open_pinned=files, read_once=read_once, sink_check=lambda: {'dev': 1, 'ino': 7}, exists=exists)
+                       open_pinned=files, read_once=read_once, sink_check=lambda: {'dev': 1, 'ino': 7}, claim_once=claim_once)
 
     def test_complete_path_emits_child_once_then_a_prepared_receipt_and_exits_0(self):
         sink = Sink(); child = FakeChild()
@@ -688,12 +721,12 @@ class MainPathModelTests(unittest.TestCase):
     def test_receipt_construction_failure_before_any_write_allows_one_short_receipt(self):
         # Complete path clock reads: preflight.start 1; scope.before 2; scope gate x2 3-4; scope.after 5;
         # four pin rows x (before, gate x2, after) 6-21; roster.before 22, roster gate x2 23-24, roster.after 25;
-        # frame.before 26, frame write gate x2 27-28; launch.before 29; wait.before 30, wait timeout 31,
-        # wait.after 32; forward.before 33, forward gate x2 34-35, forward.after 36; inputs_after 37-40;
-        # preserved_after 41-44; parse.before 45, parse.after 46. Cleanup reads nothing here. Then
-        # receipt.before = 47 and the elapsed stamp inside construction = 48.
+        # once-claim gate x2 26-27; frame.before 28, frame write gate x2 29-30; launch.before 31; wait.before 32,
+        # wait timeout 33, wait.after 34; forward.before 35, forward gate x2 36-37, forward.after 38; inputs_after
+        # 39-42; preserved_after 43-46; parse.before 47, parse.after 48. Cleanup reads nothing here. Then
+        # receipt.before = 49 and the elapsed stamp inside construction = 50.
         sink = Sink()
-        code = self.run_main(sink, Clock(sv.ORIGIN, fail_at_call=48))
+        code = self.run_main(sink, Clock(sv.ORIGIN, fail_at_call=50))
         self.assertEqual(code, 84)
         receipt = last_json_line(sink)
         self.assertEqual((receipt['status'], receipt['receipt_emission']), (sv.STATUS_UNKNOWN, 'short'))
@@ -701,10 +734,10 @@ class MainPathModelTests(unittest.TestCase):
         self.assertEqual(bytes(sink.data).count(b'"schema":"' + sv.RECEIPT_SCHEMA.encode()), 1)
 
     def test_receipt_construction_crossing_the_orchestration_cutoff_means_zero_receipt_writer_calls(self):
-        # The elapsed stamp (call 48, see the count above) is the first reading past the cutoff:
-        # receipt.before (47) passed, the fresh receipt.write.before check refuses, and the writer is
+        # The elapsed stamp (call 50, see the count above) is the first reading past the cutoff:
+        # receipt.before (49) passed, the fresh receipt.write.before check refuses, and the writer is
         # never called for the receipt.
-        readings = [sv.ORIGIN] * 47 + [sv.ORIGIN + sv.ORCH_SECONDS + 0.1]
+        readings = [sv.ORIGIN] * 49 + [sv.ORIGIN + sv.ORCH_SECONDS + 0.1]
         sink = Sink()
         code = self.run_main(sink, Clock(*readings))
         self.assertEqual(code, 84)
@@ -729,10 +762,29 @@ class MainPathModelTests(unittest.TestCase):
         self.assertEqual(sink.calls, 2)
         self.assertNotIn(b'"schema":"' + sv.RECEIPT_SCHEMA.encode(), bytes(sink.data))
 
+    def test_once_marker_is_claimed_before_the_child_launches(self):
+        # main() creates the marker itself, once, before popen.
+        events = []
+        def claim(path, gate):
+            events.append(('claim', path)); gate(); gate()
+        child = FakeChild()
+        sink = Sink()
+        def run():
+            return sv.main(['/r/scope.json'], now=Clock(sv.ORIGIN), writer=sink,
+                           popen=lambda *a, **k: (events.append(('popen',)), child)[1],
+                           collect=lambda c, d, f: self.output, open_pinned=self.files,
+                           read_once=lambda path, op, gate, raw=self.scope_raw: self.files(
+                               {'path': path, 'bytes': len(raw), 'mode': '0400', 'sha256': sv.digest(raw)}, gate=gate),
+                           sink_check=lambda: {'dev': 1, 'ino': 7}, claim_once=claim)
+        self.assertEqual(run(), 0)
+        self.assertEqual(events, [('claim', '/r/.once'), ('popen',)])
+
     def test_used_once_marker_refuses_before_any_child(self):
 
+        def used(path, gate):
+            raise Refused('once namespace already used')
         sink = Sink(); child = FakeChild()
-        self.run_main(sink, Clock(sv.ORIGIN), child, exists=lambda p: True)
+        self.run_main(sink, Clock(sv.ORIGIN), child, claim_once=used)
         receipt = last_json_line(sink)
         self.assertEqual(receipt['status'], sv.STATUS_REFUSED)
         self.assertIn('once namespace already used', receipt['error']['text'])
@@ -1033,7 +1085,7 @@ class PartialChildOutputTests(unittest.TestCase):
             return files({'path': path, 'bytes': len(raw), 'mode': '0400', 'sha256': sv.digest(raw)}, gate=gate)
         sink = Sink()
         sv.main(['/r/scope.json'], now=clock, writer=sink, popen=lambda *a, **k: FakeChild(), collect=collect,
-                open_pinned=files, read_once=read_once, sink_check=lambda: {'dev': 1, 'ino': 7}, exists=lambda p: False)
+                open_pinned=files, read_once=read_once, sink_check=lambda: {'dev': 1, 'ino': 7}, claim_once=lambda p, g: None)
         receipt = json_suffix_at(sink, frame_length() + len(b'late!'))
         self.assertNotEqual(receipt['status'], sv.STATUS_COMPLETE)
         self.assertEqual((receipt['child_emission'], receipt['child_bytes']), ('completed', 5))
@@ -1049,7 +1101,7 @@ class PartialChildOutputTests(unittest.TestCase):
             return files({'path': path, 'bytes': len(raw), 'mode': '0400', 'sha256': sv.digest(raw)}, gate=gate)
         sink = Sink()
         sv.main(['/r/scope.json'], now=Clock(sv.ORIGIN), writer=sink, popen=lambda *a, **k: FakeChild(), collect=collect,
-                open_pinned=files, read_once=read_once, sink_check=lambda: {'dev': 1, 'ino': 7}, exists=lambda p: False)
+                open_pinned=files, read_once=read_once, sink_check=lambda: {'dev': 1, 'ino': 7}, claim_once=lambda p, g: None)
         receipt = json_suffix_at(sink, frame_length() + len(b'partial'))   # preflight frame, forwarded bytes, receipt
         self.assertEqual(receipt['status'], sv.STATUS_REFUSED)
         self.assertEqual((receipt['child_emission'], receipt['child_bytes']), ('completed', 7))
