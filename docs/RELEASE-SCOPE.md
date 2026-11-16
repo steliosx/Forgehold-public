@@ -6,6 +6,6 @@ This tree starts a new history for a source preview. Operational history, privat
 
 The 27-ID roster under `wrapper/scope/` describes a specific subset used by the supervisor's parser tests; it is not the count of the complete test suite. Existing schema labels are retained for compatibility with the source models.
 
-Deployment references are renamed `.example`, not executable, and disabled before their operational content. Their paths, identities, image pins and credential references are placeholders. Runtime version references are historical design examples, not recommendations to install those versions. A future deployment must independently select and review supported dependencies, configure every binding, and qualify the result on its intended host.
+Deployment references are renamed `.example`, not executable, and disabled before their operational content. [Packet from public](PACKET-FROM-PUBLIC.md) proposes how a lane packet could be rendered from this tree plus local deployment data. Their paths, identities, image pins and credential references are placeholders. Runtime version references are historical design examples, not recommendations to install those versions. A future deployment must independently select and review supported dependencies, configure every binding, and qualify the result on its intended host.
 
 Local and hosted unit results qualify only the tested source. This release does not include live VM, isolation, cleanup, throughput or project-CI qualification evidence.
