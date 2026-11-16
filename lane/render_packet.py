@@ -9,17 +9,18 @@ must not exist; its parent must exist and must not be inside a git work tree. Th
 name fill FH_PACKET_DIR and FH_PACKET_NAME.
 
 Rendering removes each deployment file's guard (the refusal lines of a script, the comment and never-met
-condition of a unit), replaces every @@FH_<NAME>@@ token, writes every file read-only, then SHA256SUMS
-and RENDER.json. The same inputs give the same bytes. Exit 0 = rendered; 2 = refused (nothing is left).
+condition of a unit), replaces every @@FH_<NAME>@@ token, and writes every file read-only, then
+SHA256SUMS and RENDER.json. It creates the packet directory itself (never replacing one), writes every
+byte with a checked loop, reads every file back against the manifest, and only then sets the directory
+read-only. The same inputs give the same bytes. Exit 0 = rendered and verified; 2 = refused: nothing of
+this run is left, unless the message says the output was retained.
 """
 import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 
 SCHEMA = "FH_RENDER_CONFIG_1"
 RECORD_SCHEMA = "FH_RENDER_RECORD_1"
@@ -80,7 +81,8 @@ def sha(data):
 
 
 def read_regular(path, limit=MAX):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    # O_NONBLOCK: a FIFO or device must not block the open; fstat then refuses anything but a regular file.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
     try:
         st = os.fstat(fd)
         if not (st.st_mode & 0o170000 == 0o100000) or st.st_size > limit:
@@ -136,6 +138,76 @@ def substitute(text, values, source):
     return out
 
 
+def write_all(fd, data, ops):
+    view = memoryview(data)
+    while view:
+        n = ops.write(fd, view)
+        if not isinstance(n, int) or n <= 0 or n > len(view):
+            raise Refused("write made no progress")
+        view = view[n:]
+
+
+def verify(out, rendered, ops):
+    names = sorted(name for name, _ in rendered)
+    if sorted(ops.listdir(out)) != names:
+        raise Refused("packet directory inventory differs from the manifest")
+    for name, data in rendered:
+        fd = ops.open(os.path.join(out, name), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+        try:
+            st = ops.fstat(fd)
+            if st.st_mode & 0o170000 != 0o100000 or st.st_mode & 0o7777 != 0o400 or st.st_size != len(data):
+                raise Refused("written file differs from the manifest: %s" % name)
+            got = b""
+            while len(got) <= len(data):
+                chunk = ops.read(fd, 65536)
+                if not chunk:
+                    break
+                got += chunk
+            if got != data:
+                raise Refused("written file differs from the manifest: %s" % name)
+        finally:
+            ops.close(fd)
+
+
+def publish(out, rendered, ops):
+    """Create out (never replacing anything), write, verify, set 0500. On failure remove only what this run made."""
+    try:
+        ops.mkdir(out, 0o700)
+    except FileExistsError:
+        raise Refused("packet directory exists: %s" % out) from None
+    made = []
+    try:
+        for name, data in rendered:
+            path = os.path.join(out, name)
+            fd = ops.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o400)
+            made.append(path)
+            try:
+                write_all(fd, data, ops)
+            finally:
+                ops.close(fd)
+            ops.chmod(path, 0o400)
+        verify(out, rendered, ops)
+        ops.chmod(out, 0o500)
+        if ops.stat(out).st_mode & 0o7777 != 0o500:
+            raise Refused("packet directory mode is not 0500")
+    except BaseException as error:
+        reason = error if isinstance(error, Refused) else "%s: %s" % (type(error).__name__, error)
+        try:
+            ops.chmod(out, 0o700)
+            for path in made:
+                try:
+                    ops.unlink(path)
+                except FileNotFoundError:
+                    pass
+            ops.rmdir(out)
+        except OSError:
+            raise Refused("%s; output retained at %s (it holds files this run did not make, or cleanup failed)"
+                          % (reason, out)) from None
+        if isinstance(error, (Refused, OSError)):
+            raise Refused(str(reason)) from None
+        raise
+
+
 def source_commit(tree):
     try:
         head = subprocess.run(["git", "-C", tree, "rev-parse", "--verify", "HEAD"], capture_output=True, timeout=20)
@@ -177,7 +249,7 @@ def data_files(cfgdir):
     return allow, watch
 
 
-def render(tree, cfgdir, out):
+def render(tree, cfgdir, out, ops=os):
     out = os.path.abspath(out)
     parent, name = os.path.dirname(out), os.path.basename(out)
     if os.path.lexists(out):
@@ -218,20 +290,7 @@ def render(tree, cfgdir, out):
               "watch_sha256": sha(watch), "tokens": sorted(TOKENS)}
     rendered.append(("RENDER.json", (json.dumps(record, indent=1, sort_keys=True) + "\n").encode()))
     sums = "".join("%s  %s\n" % (sha(data), pname) for pname, data in rendered).encode()
-    tmp = tempfile.mkdtemp(prefix=".render-", dir=parent)
-    try:
-        for pname, data in rendered + [("SHA256SUMS", sums)]:
-            fd = os.open(os.path.join(tmp, pname), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
-            try:
-                os.write(fd, data)
-            finally:
-                os.close(fd)
-            os.chmod(os.path.join(tmp, pname), 0o400)
-        os.rename(tmp, out)
-    except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
-    os.chmod(out, 0o500)
+    publish(out, rendered + [("SHA256SUMS", sums)], ops)
     return record, sha(sums)
 
 

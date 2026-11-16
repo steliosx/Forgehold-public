@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import stat
 import tempfile
 import unittest
@@ -59,10 +60,11 @@ class Fixture(unittest.TestCase):
         self.write_json('config.json', {'schema': R.SCHEMA, 'values': values})
 
     def refused(self, pattern):
+        before = sorted(os.listdir(self.parent))
         with self.assertRaisesRegex(R.Refused, pattern):
             R.render(self.tree, self.cfg, self.out)
         self.assertFalse(os.path.lexists(self.out))
-        self.assertEqual([n for n in os.listdir(self.parent) if n.startswith('.render-')], [])
+        self.assertEqual(sorted(os.listdir(self.parent)), before)
 
 
 class RenderTests(Fixture):
@@ -160,6 +162,95 @@ class RefusalTests(Fixture):
         with self.assertRaises(OSError):
             R.render(self.tree, self.cfg, self.out)
         self.assertFalse(os.path.lexists(self.out))
+
+
+
+class FakeOps:
+    """os with chosen calls replaced (fault injection for publish/verify)."""
+    def __init__(self, **calls):
+        self.__dict__.update(calls)
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+
+class PublicationFaultTests(Fixture):
+    def render(self, ops):
+        return R.render(self.tree, self.cfg, self.out, ops=ops)
+
+    def assert_refused_clean(self, ops, pattern):
+        with self.assertRaisesRegex(R.Refused, pattern):
+            self.render(ops)
+        self.assertFalse(os.path.lexists(self.out))
+        self.assertEqual(os.listdir(self.parent), [])
+
+    def test_short_writes_still_give_a_verified_packet(self):
+        _, manifest = self.render(FakeOps(write=lambda fd, data: os.write(fd, bytes(data[:7]))))
+        sums = Path(self.out, 'SHA256SUMS').read_bytes()
+        self.assertEqual(hashlib.sha256(sums).hexdigest(), manifest)
+        for line in sums.decode().splitlines():
+            digest, name = line.split('  ')
+            self.assertEqual(hashlib.sha256(Path(self.out, name).read_bytes()).hexdigest(), digest)
+
+    def test_zero_progress_refuses_and_leaves_nothing(self):
+        self.assert_refused_clean(FakeOps(write=lambda fd, data: 0), 'no progress')
+
+    def test_a_later_write_error_refuses_and_leaves_nothing(self):
+        count = []
+        def write(fd, data):
+            count.append(1)
+            if len(count) == 6:
+                raise OSError(5, 'injected I/O error')
+            return os.write(fd, data)
+        self.assert_refused_clean(FakeOps(write=write), 'injected I/O error')
+
+    def test_a_write_that_reports_more_than_it_wrote_is_caught_by_the_readback(self):
+        def write(fd, data):
+            os.write(fd, bytes(data[:max(1, len(data) // 2)]))
+            return len(data)
+        self.assert_refused_clean(FakeOps(write=write), 'differs from the manifest')
+
+    def test_a_competing_destination_is_refused_and_preserved(self):
+        def mkdir(path, mode):
+            os.mkdir(path)
+            Path(path, 'foreign.txt').write_text('not ours')
+            return os.mkdir(path, mode)
+        with self.assertRaisesRegex(R.Refused, 'packet directory exists'):
+            self.render(FakeOps(mkdir=mkdir))
+        self.assertEqual(Path(self.out, 'foreign.txt').read_text(), 'not ours')
+
+    def test_a_final_mode_failure_leaves_nothing(self):
+        def chmod(path, mode):
+            if path == self.out and mode == 0o500:
+                raise PermissionError(1, 'injected chmod failure')
+            return os.chmod(path, mode)
+        self.assert_refused_clean(FakeOps(chmod=chmod), 'injected chmod failure')
+
+    def test_a_foreign_file_in_the_output_is_retained_and_reported(self):
+        opened = []
+        def open_(path, flags, mode=0o777):
+            if flags & os.O_CREAT:
+                opened.append(path)
+                if len(opened) == 3:
+                    Path(self.out, 'foreign.txt').write_text('not ours')
+                if len(opened) == 5:
+                    raise OSError(5, 'injected open failure')
+            return os.open(path, flags, mode)
+        with self.assertRaisesRegex(R.Refused, 'output retained at'):
+            self.render(FakeOps(open=open_))
+        self.assertEqual(Path(self.out, 'foreign.txt').read_text(), 'not ours')
+        self.assertEqual(os.listdir(self.out), ['foreign.txt'])
+
+    def test_a_fifo_input_refuses_promptly(self):
+        os.unlink(os.path.join(self.cfg, 'config.json'))
+        os.mkfifo(os.path.join(self.cfg, 'config.json'))
+        old = signal.signal(signal.SIGALRM, lambda *a: (_ for _ in ()).throw(TimeoutError('blocked on a FIFO')))
+        signal.alarm(5)
+        try:
+            self.assert_refused_clean(os, 'not a bounded regular file')
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old)
 
 
 if __name__ == '__main__':
